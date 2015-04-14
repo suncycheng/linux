@@ -445,15 +445,7 @@ static int xen_cpu_up(unsigned int cpu, struct task_struct *idle)
 {
 	int rc;
 
-	per_cpu(current_task, cpu) = idle;
-#ifdef CONFIG_X86_32
-	irq_ctx_init(cpu);
-#else
-	clear_tsk_thread_flag(idle, TIF_FORK);
-#endif
-	per_cpu(kernel_stack, cpu) =
-		(unsigned long)task_stack_page(idle) -
-		KERNEL_STACK_OFFSET + THREAD_SIZE;
+	common_cpu_up(cpu, idle);
 
 	xen_setup_runstate_info(cpu);
 	xen_setup_timer(cpu);
@@ -467,10 +459,6 @@ static int xen_cpu_up(unsigned int cpu, struct task_struct *idle)
 	rc = cpu_initialize_context(cpu, idle);
 	if (rc)
 		return rc;
-
-	if (num_online_cpus() == 1)
-		/* Just in case we booted with a single CPU. */
-		alternatives_enable_smp();
 
 	rc = xen_smp_intr_init(cpu);
 	if (rc)
@@ -507,7 +495,7 @@ static int xen_cpu_disable(void)
 static void xen_cpu_die(unsigned int cpu)
 {
 	while (xen_pv_domain() && HYPERVISOR_vcpu_op(VCPUOP_is_up, cpu, NULL)) {
-		current->state = TASK_UNINTERRUPTIBLE;
+		__set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule_timeout(HZ/10);
 	}
 
