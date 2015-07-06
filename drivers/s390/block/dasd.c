@@ -38,6 +38,8 @@
  */
 #define DASD_CHANQ_MAX_SIZE 4
 
+#define DASD_DIAG_MOD		"dasd_diag_mod"
+
 /*
  * SECTION: exported variables of dasd.c
  */
@@ -579,7 +581,8 @@ void dasd_kick_device(struct dasd_device *device)
 {
 	dasd_get_device(device);
 	/* queue call to dasd_kick_device to the kernel event daemon. */
-	schedule_work(&device->kick_work);
+	if (!schedule_work(&device->kick_work))
+		dasd_put_device(device);
 }
 EXPORT_SYMBOL(dasd_kick_device);
 
@@ -599,7 +602,8 @@ void dasd_reload_device(struct dasd_device *device)
 {
 	dasd_get_device(device);
 	/* queue call to dasd_reload_device to the kernel event daemon. */
-	schedule_work(&device->reload_device);
+	if (!schedule_work(&device->reload_device))
+		dasd_put_device(device);
 }
 EXPORT_SYMBOL(dasd_reload_device);
 
@@ -619,7 +623,8 @@ void dasd_restore_device(struct dasd_device *device)
 {
 	dasd_get_device(device);
 	/* queue call to dasd_restore_device to the kernel event daemon. */
-	schedule_work(&device->restore_device);
+	if (!schedule_work(&device->restore_device))
+		dasd_put_device(device);
 }
 
 /*
@@ -1237,7 +1242,6 @@ EXPORT_SYMBOL(dasd_smalloc_request);
  */
 void dasd_kfree_request(struct dasd_ccw_req *cqr, struct dasd_device *device)
 {
-#ifdef CONFIG_64BIT
 	struct ccw1 *ccw;
 
 	/* Clear any idals used for the request. */
@@ -1245,7 +1249,6 @@ void dasd_kfree_request(struct dasd_ccw_req *cqr, struct dasd_device *device)
 	do {
 		clear_normalized_cda(ccw);
 	} while (ccw++->flags & (CCW_FLAG_CC | CCW_FLAG_DC));
-#endif
 	kfree(cqr->cpaddr);
 	kfree(cqr->data);
 	kfree(cqr);
@@ -2165,18 +2168,22 @@ static int _dasd_sleep_on(struct dasd_ccw_req *maincqr, int interruptible)
 			cqr->intrc = -ENOLINK;
 			continue;
 		}
-		/* Don't try to start requests if device is stopped */
-		if (interruptible) {
-			rc = wait_event_interruptible(
-				generic_waitq, !(device->stopped));
-			if (rc == -ERESTARTSYS) {
-				cqr->status = DASD_CQR_FAILED;
-				maincqr->intrc = rc;
-				continue;
-			}
-		} else
-			wait_event(generic_waitq, !(device->stopped));
-
+		/*
+		 * Don't try to start requests if device is stopped
+		 * except path verification requests
+		 */
+		if (!test_bit(DASD_CQR_VERIFY_PATH, &cqr->flags)) {
+			if (interruptible) {
+				rc = wait_event_interruptible(
+					generic_waitq, !(device->stopped));
+				if (rc == -ERESTARTSYS) {
+					cqr->status = DASD_CQR_FAILED;
+					maincqr->intrc = rc;
+					continue;
+				}
+			} else
+				wait_event(generic_waitq, !(device->stopped));
+		}
 		if (!cqr->callback)
 			cqr->callback = dasd_wakeup_cb;
 
@@ -2526,6 +2533,11 @@ static void __dasd_process_request_queue(struct dasd_block *block)
 			__blk_end_request_all(req, -EIO);
 		return;
 	}
+
+	/* if device ist stopped do not fetch new requests */
+	if (basedev->stopped)
+		return;
+
 	/* Now we try to fetch requests from the request queue */
 	while ((req = blk_peek_request(queue))) {
 		if (basedev->features & DASD_FEATURE_READONLY &&
@@ -2967,8 +2979,6 @@ enum blk_eh_timer_return dasd_times_out(struct request *req)
  */
 static int dasd_alloc_queue(struct dasd_block *block)
 {
-	int rc;
-
 	block->request_queue = blk_init_queue(do_dasd_request,
 					       &block->request_queue_lock);
 	if (block->request_queue == NULL)
@@ -2976,14 +2986,7 @@ static int dasd_alloc_queue(struct dasd_block *block)
 
 	block->request_queue->queuedata = block;
 
-	elevator_exit(block->request_queue->elevator);
-	block->request_queue->elevator = NULL;
-	mutex_lock(&block->request_queue->sysfs_lock);
-	rc = elevator_init(block->request_queue, "deadline");
-	if (rc)
-		blk_cleanup_queue(block->request_queue);
-	mutex_unlock(&block->request_queue->sysfs_lock);
-	return rc;
+	return 0;
 }
 
 /*
@@ -3299,6 +3302,21 @@ int dasd_generic_set_online(struct ccw_device *cdev,
 	discipline = base_discipline;
 	if (device->features & DASD_FEATURE_USEDIAG) {
 	  	if (!dasd_diag_discipline_pointer) {
+			/* Try to load the required module. */
+			rc = request_module(DASD_DIAG_MOD);
+			if (rc) {
+				pr_warn("%s Setting the DASD online failed "
+					"because the required module %s "
+					"could not be loaded (rc=%d)\n",
+					dev_name(&cdev->dev), DASD_DIAG_MOD,
+					rc);
+				dasd_delete_device(device);
+				return -ENODEV;
+			}
+		}
+		/* Module init could have failed, so check again here after
+		 * request_module(). */
+		if (!dasd_diag_discipline_pointer) {
 			pr_warn("%s Setting the DASD online failed because of missing DIAG discipline\n",
 				dev_name(&cdev->dev));
 			dasd_delete_device(device);

@@ -492,7 +492,7 @@ static int quadfs_pll_is_enabled(struct clk_hw *hw)
 	return !!npda;
 }
 
-int clk_fs660c32_vco_get_rate(unsigned long input, struct stm_fs *fs,
+static int clk_fs660c32_vco_get_rate(unsigned long input, struct stm_fs *fs,
 			   unsigned long *rate)
 {
 	unsigned long nd = fs->ndiv + 16; /* ndiv value */
@@ -519,7 +519,7 @@ static unsigned long quadfs_pll_fs660c32_recalc_rate(struct clk_hw *hw,
 	return rate;
 }
 
-int clk_fs660c32_vco_get_params(unsigned long input,
+static int clk_fs660c32_vco_get_params(unsigned long input,
 				unsigned long output, struct stm_fs *fs)
 {
 /* Formula
@@ -1057,7 +1057,7 @@ static struct clk * __init st_clk_register_quadfs_fsynth(
 	return clk;
 }
 
-static struct of_device_id quadfs_of_match[] = {
+static const struct of_device_id quadfs_of_match[] = {
 	{
 		.compatible = "st,stih416-quadfs216",
 		.data = &st_fs216c65_416
