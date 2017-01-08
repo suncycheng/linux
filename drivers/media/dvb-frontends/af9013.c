@@ -866,9 +866,9 @@ err:
 	return ret;
 }
 
-static int af9013_get_frontend(struct dvb_frontend *fe)
+static int af9013_get_frontend(struct dvb_frontend *fe,
+			       struct dtv_frontend_properties *c)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct af9013_state *state = fe->demodulator_priv;
 	int ret;
 	u8 buf[3];
@@ -1344,10 +1344,14 @@ err:
 static void af9013_release(struct dvb_frontend *fe)
 {
 	struct af9013_state *state = fe->demodulator_priv;
+
+	/* stop statistics polling */
+	cancel_delayed_work_sync(&state->statistics_work);
+
 	kfree(state);
 }
 
-static struct dvb_frontend_ops af9013_ops;
+static const struct dvb_frontend_ops af9013_ops;
 
 static int af9013_download_firmware(struct af9013_state *state)
 {
@@ -1512,7 +1516,7 @@ err:
 }
 EXPORT_SYMBOL(af9013_attach);
 
-static struct dvb_frontend_ops af9013_ops = {
+static const struct dvb_frontend_ops af9013_ops = {
 	.delsys = { SYS_DVBT },
 	.info = {
 		.name = "Afatech AF9013",

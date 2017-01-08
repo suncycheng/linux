@@ -245,6 +245,8 @@ enum {
 	Opt_nocrc,
 	Opt_cephx_require_signatures,
 	Opt_nocephx_require_signatures,
+	Opt_cephx_sign_messages,
+	Opt_nocephx_sign_messages,
 	Opt_tcp_nodelay,
 	Opt_notcp_nodelay,
 };
@@ -267,6 +269,8 @@ static match_table_t opt_tokens = {
 	{Opt_nocrc, "nocrc"},
 	{Opt_cephx_require_signatures, "cephx_require_signatures"},
 	{Opt_nocephx_require_signatures, "nocephx_require_signatures"},
+	{Opt_cephx_sign_messages, "cephx_sign_messages"},
+	{Opt_nocephx_sign_messages, "nocephx_sign_messages"},
 	{Opt_tcp_nodelay, "tcp_nodelay"},
 	{Opt_notcp_nodelay, "notcp_nodelay"},
 	{-1, NULL}
@@ -318,7 +322,7 @@ static int get_secret(struct ceph_crypto_key *dst, const char *name) {
 		goto out;
 	}
 
-	ckey = ukey->payload.data;
+	ckey = ukey->payload.data[0];
 	err = ceph_crypto_key_clone(dst, ckey);
 	if (err)
 		goto out_key;
@@ -490,6 +494,12 @@ ceph_parse_options(char *options, const char *dev_name,
 		case Opt_nocephx_require_signatures:
 			opt->flags |= CEPH_OPT_NOMSGAUTH;
 			break;
+		case Opt_cephx_sign_messages:
+			opt->flags &= ~CEPH_OPT_NOMSGSIGN;
+			break;
+		case Opt_nocephx_sign_messages:
+			opt->flags |= CEPH_OPT_NOMSGSIGN;
+			break;
 
 		case Opt_tcp_nodelay:
 			opt->flags |= CEPH_OPT_TCP_NODELAY;
@@ -517,8 +527,11 @@ int ceph_print_client_options(struct seq_file *m, struct ceph_client *client)
 	struct ceph_options *opt = client->options;
 	size_t pos = m->count;
 
-	if (opt->name)
-		seq_printf(m, "name=%s,", opt->name);
+	if (opt->name) {
+		seq_puts(m, "name=");
+		seq_escape(m, opt->name, ", \t\n\\");
+		seq_putc(m, ',');
+	}
 	if (opt->key)
 		seq_puts(m, "secret=<hidden>,");
 
@@ -530,6 +543,8 @@ int ceph_print_client_options(struct seq_file *m, struct ceph_client *client)
 		seq_puts(m, "nocrc,");
 	if (opt->flags & CEPH_OPT_NOMSGAUTH)
 		seq_puts(m, "nocephx_require_signatures,");
+	if (opt->flags & CEPH_OPT_NOMSGSIGN)
+		seq_puts(m, "nocephx_sign_messages,");
 	if ((opt->flags & CEPH_OPT_TCP_NODELAY) == 0)
 		seq_puts(m, "notcp_nodelay,");
 
@@ -551,11 +566,17 @@ int ceph_print_client_options(struct seq_file *m, struct ceph_client *client)
 }
 EXPORT_SYMBOL(ceph_print_client_options);
 
-u64 ceph_client_id(struct ceph_client *client)
+struct ceph_entity_addr *ceph_client_addr(struct ceph_client *client)
+{
+	return &client->msgr.inst.addr;
+}
+EXPORT_SYMBOL(ceph_client_addr);
+
+u64 ceph_client_gid(struct ceph_client *client)
 {
 	return client->monc.auth->global_id;
 }
-EXPORT_SYMBOL(ceph_client_id);
+EXPORT_SYMBOL(ceph_client_gid);
 
 /*
  * create a fresh client instance
@@ -592,11 +613,7 @@ struct ceph_client *ceph_create_client(struct ceph_options *opt, void *private,
 	if (ceph_test_opt(client, MYIP))
 		myaddr = &client->options->my_addr;
 
-	ceph_messenger_init(&client->msgr, myaddr,
-		client->supported_features,
-		client->required_features,
-		ceph_test_opt(client, NOCRC),
-		ceph_test_opt(client, TCP_NODELAY));
+	ceph_messenger_init(&client->msgr, myaddr);
 
 	/* subsystems */
 	err = ceph_monc_init(&client->monc, client);
@@ -640,7 +657,7 @@ EXPORT_SYMBOL(ceph_destroy_client);
 /*
  * true if we have the mon map (and have thus joined the cluster)
  */
-static int have_mon_and_osd_map(struct ceph_client *client)
+static bool have_mon_and_osd_map(struct ceph_client *client)
 {
 	return client->monc.monmap && client->monc.monmap->epoch &&
 	       client->osdc.osdmap && client->osdc.osdmap->epoch;
@@ -673,6 +690,10 @@ int __ceph_open_session(struct ceph_client *client, unsigned long started)
 		if (client->auth_err < 0)
 			return client->auth_err;
 	}
+
+	pr_info("client%llu fsid %pU\n", ceph_client_gid(client),
+		&client->fsid);
+	ceph_debugfs_client_init(client);
 
 	return 0;
 }
@@ -733,6 +754,8 @@ out:
 static void __exit exit_ceph_lib(void)
 {
 	dout("exit_ceph_lib\n");
+	WARN_ON(!ceph_strings_empty());
+
 	ceph_osdc_cleanup();
 	ceph_msgr_exit();
 	ceph_crypto_shutdown();

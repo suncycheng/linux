@@ -8,20 +8,21 @@ http://github.com/freedreno/envytools/
 git clone https://github.com/freedreno/envytools.git
 
 The rules-ng-ng source files this header was generated from are:
-- /home/robclark/src/freedreno/envytools/rnndb/msm.xml                 (    676 bytes, from 2014-12-05 15:34:49)
-- /home/robclark/src/freedreno/envytools/rnndb/freedreno_copyright.xml (   1453 bytes, from 2013-03-31 16:51:27)
-- /home/robclark/src/freedreno/envytools/rnndb/mdp/mdp4.xml            (  20915 bytes, from 2015-03-24 22:05:22)
-- /home/robclark/src/freedreno/envytools/rnndb/mdp/mdp_common.xml      (   2352 bytes, from 2015-04-12 15:02:42)
-- /home/robclark/src/freedreno/envytools/rnndb/mdp/mdp5.xml            (  35083 bytes, from 2015-04-12 15:04:03)
-- /home/robclark/src/freedreno/envytools/rnndb/dsi/dsi.xml             (  22094 bytes, from 2015-05-12 12:45:23)
-- /home/robclark/src/freedreno/envytools/rnndb/dsi/sfpb.xml            (    344 bytes, from 2013-08-11 19:26:32)
-- /home/robclark/src/freedreno/envytools/rnndb/dsi/mmss_cc.xml         (   1686 bytes, from 2014-10-31 16:48:57)
-- /home/robclark/src/freedreno/envytools/rnndb/hdmi/qfprom.xml         (    600 bytes, from 2013-07-05 19:21:12)
-- /home/robclark/src/freedreno/envytools/rnndb/hdmi/hdmi.xml           (  29012 bytes, from 2015-05-12 12:45:23)
-- /home/robclark/src/freedreno/envytools/rnndb/edp/edp.xml             (  10416 bytes, from 2015-05-12 12:45:23)
+- /home/robclark/src/freedreno/envytools/rnndb/msm.xml                 (    676 bytes, from 2015-05-20 20:03:14)
+- /home/robclark/src/freedreno/envytools/rnndb/freedreno_copyright.xml (   1572 bytes, from 2016-02-10 17:07:21)
+- /home/robclark/src/freedreno/envytools/rnndb/mdp/mdp4.xml            (  20915 bytes, from 2015-05-20 20:03:14)
+- /home/robclark/src/freedreno/envytools/rnndb/mdp/mdp_common.xml      (   2849 bytes, from 2015-09-18 12:07:28)
+- /home/robclark/src/freedreno/envytools/rnndb/mdp/mdp5.xml            (  36965 bytes, from 2016-11-26 23:01:08)
+- /home/robclark/src/freedreno/envytools/rnndb/dsi/dsi.xml             (  27887 bytes, from 2015-10-22 16:34:52)
+- /home/robclark/src/freedreno/envytools/rnndb/dsi/sfpb.xml            (    602 bytes, from 2015-10-22 16:35:02)
+- /home/robclark/src/freedreno/envytools/rnndb/dsi/mmss_cc.xml         (   1686 bytes, from 2015-05-20 20:03:14)
+- /home/robclark/src/freedreno/envytools/rnndb/hdmi/qfprom.xml         (    600 bytes, from 2015-05-20 20:03:07)
+- /home/robclark/src/freedreno/envytools/rnndb/hdmi/hdmi.xml           (  41472 bytes, from 2016-01-22 18:18:18)
+- /home/robclark/src/freedreno/envytools/rnndb/edp/edp.xml             (  10416 bytes, from 2015-05-20 20:03:14)
 
-Copyright (C) 2013-2015 by the following authors:
+Copyright (C) 2013-2016 by the following authors:
 - Rob Clark <robdclark@gmail.com> (robclark)
+- Ilia Mirkin <imirkin@alum.mit.edu> (imirkin)
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -197,118 +198,109 @@ static inline uint32_t MDSS_HW_VERSION_MAJOR(uint32_t val)
 #define MDSS_HW_INTR_STATUS_INTR_HDMI				0x00000100
 #define MDSS_HW_INTR_STATUS_INTR_EDP				0x00001000
 
-static inline uint32_t __offset_MDP(uint32_t idx)
+#define REG_MDP5_HW_VERSION					0x00000000
+#define MDP5_HW_VERSION_STEP__MASK				0x0000ffff
+#define MDP5_HW_VERSION_STEP__SHIFT				0
+static inline uint32_t MDP5_HW_VERSION_STEP(uint32_t val)
 {
-	switch (idx) {
-		case 0: return (mdp5_cfg->mdp.base[0]);
-		default: return INVALID_IDX(idx);
-	}
+	return ((val) << MDP5_HW_VERSION_STEP__SHIFT) & MDP5_HW_VERSION_STEP__MASK;
 }
-static inline uint32_t REG_MDP5_MDP(uint32_t i0) { return 0x00000000 + __offset_MDP(i0); }
-
-static inline uint32_t REG_MDP5_MDP_HW_VERSION(uint32_t i0) { return 0x00000000 + __offset_MDP(i0); }
-#define MDP5_MDP_HW_VERSION_STEP__MASK				0x0000ffff
-#define MDP5_MDP_HW_VERSION_STEP__SHIFT				0
-static inline uint32_t MDP5_MDP_HW_VERSION_STEP(uint32_t val)
+#define MDP5_HW_VERSION_MINOR__MASK				0x0fff0000
+#define MDP5_HW_VERSION_MINOR__SHIFT				16
+static inline uint32_t MDP5_HW_VERSION_MINOR(uint32_t val)
 {
-	return ((val) << MDP5_MDP_HW_VERSION_STEP__SHIFT) & MDP5_MDP_HW_VERSION_STEP__MASK;
+	return ((val) << MDP5_HW_VERSION_MINOR__SHIFT) & MDP5_HW_VERSION_MINOR__MASK;
 }
-#define MDP5_MDP_HW_VERSION_MINOR__MASK				0x0fff0000
-#define MDP5_MDP_HW_VERSION_MINOR__SHIFT			16
-static inline uint32_t MDP5_MDP_HW_VERSION_MINOR(uint32_t val)
+#define MDP5_HW_VERSION_MAJOR__MASK				0xf0000000
+#define MDP5_HW_VERSION_MAJOR__SHIFT				28
+static inline uint32_t MDP5_HW_VERSION_MAJOR(uint32_t val)
 {
-	return ((val) << MDP5_MDP_HW_VERSION_MINOR__SHIFT) & MDP5_MDP_HW_VERSION_MINOR__MASK;
-}
-#define MDP5_MDP_HW_VERSION_MAJOR__MASK				0xf0000000
-#define MDP5_MDP_HW_VERSION_MAJOR__SHIFT			28
-static inline uint32_t MDP5_MDP_HW_VERSION_MAJOR(uint32_t val)
-{
-	return ((val) << MDP5_MDP_HW_VERSION_MAJOR__SHIFT) & MDP5_MDP_HW_VERSION_MAJOR__MASK;
+	return ((val) << MDP5_HW_VERSION_MAJOR__SHIFT) & MDP5_HW_VERSION_MAJOR__MASK;
 }
 
-static inline uint32_t REG_MDP5_MDP_DISP_INTF_SEL(uint32_t i0) { return 0x00000004 + __offset_MDP(i0); }
-#define MDP5_MDP_DISP_INTF_SEL_INTF0__MASK			0x000000ff
-#define MDP5_MDP_DISP_INTF_SEL_INTF0__SHIFT			0
-static inline uint32_t MDP5_MDP_DISP_INTF_SEL_INTF0(enum mdp5_intf_type val)
+#define REG_MDP5_DISP_INTF_SEL					0x00000004
+#define MDP5_DISP_INTF_SEL_INTF0__MASK				0x000000ff
+#define MDP5_DISP_INTF_SEL_INTF0__SHIFT				0
+static inline uint32_t MDP5_DISP_INTF_SEL_INTF0(enum mdp5_intf_type val)
 {
-	return ((val) << MDP5_MDP_DISP_INTF_SEL_INTF0__SHIFT) & MDP5_MDP_DISP_INTF_SEL_INTF0__MASK;
+	return ((val) << MDP5_DISP_INTF_SEL_INTF0__SHIFT) & MDP5_DISP_INTF_SEL_INTF0__MASK;
 }
-#define MDP5_MDP_DISP_INTF_SEL_INTF1__MASK			0x0000ff00
-#define MDP5_MDP_DISP_INTF_SEL_INTF1__SHIFT			8
-static inline uint32_t MDP5_MDP_DISP_INTF_SEL_INTF1(enum mdp5_intf_type val)
+#define MDP5_DISP_INTF_SEL_INTF1__MASK				0x0000ff00
+#define MDP5_DISP_INTF_SEL_INTF1__SHIFT				8
+static inline uint32_t MDP5_DISP_INTF_SEL_INTF1(enum mdp5_intf_type val)
 {
-	return ((val) << MDP5_MDP_DISP_INTF_SEL_INTF1__SHIFT) & MDP5_MDP_DISP_INTF_SEL_INTF1__MASK;
+	return ((val) << MDP5_DISP_INTF_SEL_INTF1__SHIFT) & MDP5_DISP_INTF_SEL_INTF1__MASK;
 }
-#define MDP5_MDP_DISP_INTF_SEL_INTF2__MASK			0x00ff0000
-#define MDP5_MDP_DISP_INTF_SEL_INTF2__SHIFT			16
-static inline uint32_t MDP5_MDP_DISP_INTF_SEL_INTF2(enum mdp5_intf_type val)
+#define MDP5_DISP_INTF_SEL_INTF2__MASK				0x00ff0000
+#define MDP5_DISP_INTF_SEL_INTF2__SHIFT				16
+static inline uint32_t MDP5_DISP_INTF_SEL_INTF2(enum mdp5_intf_type val)
 {
-	return ((val) << MDP5_MDP_DISP_INTF_SEL_INTF2__SHIFT) & MDP5_MDP_DISP_INTF_SEL_INTF2__MASK;
+	return ((val) << MDP5_DISP_INTF_SEL_INTF2__SHIFT) & MDP5_DISP_INTF_SEL_INTF2__MASK;
 }
-#define MDP5_MDP_DISP_INTF_SEL_INTF3__MASK			0xff000000
-#define MDP5_MDP_DISP_INTF_SEL_INTF3__SHIFT			24
-static inline uint32_t MDP5_MDP_DISP_INTF_SEL_INTF3(enum mdp5_intf_type val)
+#define MDP5_DISP_INTF_SEL_INTF3__MASK				0xff000000
+#define MDP5_DISP_INTF_SEL_INTF3__SHIFT				24
+static inline uint32_t MDP5_DISP_INTF_SEL_INTF3(enum mdp5_intf_type val)
 {
-	return ((val) << MDP5_MDP_DISP_INTF_SEL_INTF3__SHIFT) & MDP5_MDP_DISP_INTF_SEL_INTF3__MASK;
-}
-
-static inline uint32_t REG_MDP5_MDP_INTR_EN(uint32_t i0) { return 0x00000010 + __offset_MDP(i0); }
-
-static inline uint32_t REG_MDP5_MDP_INTR_STATUS(uint32_t i0) { return 0x00000014 + __offset_MDP(i0); }
-
-static inline uint32_t REG_MDP5_MDP_INTR_CLEAR(uint32_t i0) { return 0x00000018 + __offset_MDP(i0); }
-
-static inline uint32_t REG_MDP5_MDP_HIST_INTR_EN(uint32_t i0) { return 0x0000001c + __offset_MDP(i0); }
-
-static inline uint32_t REG_MDP5_MDP_HIST_INTR_STATUS(uint32_t i0) { return 0x00000020 + __offset_MDP(i0); }
-
-static inline uint32_t REG_MDP5_MDP_HIST_INTR_CLEAR(uint32_t i0) { return 0x00000024 + __offset_MDP(i0); }
-
-static inline uint32_t REG_MDP5_MDP_SPARE_0(uint32_t i0) { return 0x00000028 + __offset_MDP(i0); }
-#define MDP5_MDP_SPARE_0_SPLIT_DPL_SINGLE_FLUSH_EN		0x00000001
-
-static inline uint32_t REG_MDP5_MDP_SMP_ALLOC_W(uint32_t i0, uint32_t i1) { return 0x00000080 + __offset_MDP(i0) + 0x4*i1; }
-
-static inline uint32_t REG_MDP5_MDP_SMP_ALLOC_W_REG(uint32_t i0, uint32_t i1) { return 0x00000080 + __offset_MDP(i0) + 0x4*i1; }
-#define MDP5_MDP_SMP_ALLOC_W_REG_CLIENT0__MASK			0x000000ff
-#define MDP5_MDP_SMP_ALLOC_W_REG_CLIENT0__SHIFT			0
-static inline uint32_t MDP5_MDP_SMP_ALLOC_W_REG_CLIENT0(uint32_t val)
-{
-	return ((val) << MDP5_MDP_SMP_ALLOC_W_REG_CLIENT0__SHIFT) & MDP5_MDP_SMP_ALLOC_W_REG_CLIENT0__MASK;
-}
-#define MDP5_MDP_SMP_ALLOC_W_REG_CLIENT1__MASK			0x0000ff00
-#define MDP5_MDP_SMP_ALLOC_W_REG_CLIENT1__SHIFT			8
-static inline uint32_t MDP5_MDP_SMP_ALLOC_W_REG_CLIENT1(uint32_t val)
-{
-	return ((val) << MDP5_MDP_SMP_ALLOC_W_REG_CLIENT1__SHIFT) & MDP5_MDP_SMP_ALLOC_W_REG_CLIENT1__MASK;
-}
-#define MDP5_MDP_SMP_ALLOC_W_REG_CLIENT2__MASK			0x00ff0000
-#define MDP5_MDP_SMP_ALLOC_W_REG_CLIENT2__SHIFT			16
-static inline uint32_t MDP5_MDP_SMP_ALLOC_W_REG_CLIENT2(uint32_t val)
-{
-	return ((val) << MDP5_MDP_SMP_ALLOC_W_REG_CLIENT2__SHIFT) & MDP5_MDP_SMP_ALLOC_W_REG_CLIENT2__MASK;
+	return ((val) << MDP5_DISP_INTF_SEL_INTF3__SHIFT) & MDP5_DISP_INTF_SEL_INTF3__MASK;
 }
 
-static inline uint32_t REG_MDP5_MDP_SMP_ALLOC_R(uint32_t i0, uint32_t i1) { return 0x00000130 + __offset_MDP(i0) + 0x4*i1; }
+#define REG_MDP5_INTR_EN					0x00000010
 
-static inline uint32_t REG_MDP5_MDP_SMP_ALLOC_R_REG(uint32_t i0, uint32_t i1) { return 0x00000130 + __offset_MDP(i0) + 0x4*i1; }
-#define MDP5_MDP_SMP_ALLOC_R_REG_CLIENT0__MASK			0x000000ff
-#define MDP5_MDP_SMP_ALLOC_R_REG_CLIENT0__SHIFT			0
-static inline uint32_t MDP5_MDP_SMP_ALLOC_R_REG_CLIENT0(uint32_t val)
+#define REG_MDP5_INTR_STATUS					0x00000014
+
+#define REG_MDP5_INTR_CLEAR					0x00000018
+
+#define REG_MDP5_HIST_INTR_EN					0x0000001c
+
+#define REG_MDP5_HIST_INTR_STATUS				0x00000020
+
+#define REG_MDP5_HIST_INTR_CLEAR				0x00000024
+
+#define REG_MDP5_SPARE_0					0x00000028
+#define MDP5_SPARE_0_SPLIT_DPL_SINGLE_FLUSH_EN			0x00000001
+
+static inline uint32_t REG_MDP5_SMP_ALLOC_W(uint32_t i0) { return 0x00000080 + 0x4*i0; }
+
+static inline uint32_t REG_MDP5_SMP_ALLOC_W_REG(uint32_t i0) { return 0x00000080 + 0x4*i0; }
+#define MDP5_SMP_ALLOC_W_REG_CLIENT0__MASK			0x000000ff
+#define MDP5_SMP_ALLOC_W_REG_CLIENT0__SHIFT			0
+static inline uint32_t MDP5_SMP_ALLOC_W_REG_CLIENT0(uint32_t val)
 {
-	return ((val) << MDP5_MDP_SMP_ALLOC_R_REG_CLIENT0__SHIFT) & MDP5_MDP_SMP_ALLOC_R_REG_CLIENT0__MASK;
+	return ((val) << MDP5_SMP_ALLOC_W_REG_CLIENT0__SHIFT) & MDP5_SMP_ALLOC_W_REG_CLIENT0__MASK;
 }
-#define MDP5_MDP_SMP_ALLOC_R_REG_CLIENT1__MASK			0x0000ff00
-#define MDP5_MDP_SMP_ALLOC_R_REG_CLIENT1__SHIFT			8
-static inline uint32_t MDP5_MDP_SMP_ALLOC_R_REG_CLIENT1(uint32_t val)
+#define MDP5_SMP_ALLOC_W_REG_CLIENT1__MASK			0x0000ff00
+#define MDP5_SMP_ALLOC_W_REG_CLIENT1__SHIFT			8
+static inline uint32_t MDP5_SMP_ALLOC_W_REG_CLIENT1(uint32_t val)
 {
-	return ((val) << MDP5_MDP_SMP_ALLOC_R_REG_CLIENT1__SHIFT) & MDP5_MDP_SMP_ALLOC_R_REG_CLIENT1__MASK;
+	return ((val) << MDP5_SMP_ALLOC_W_REG_CLIENT1__SHIFT) & MDP5_SMP_ALLOC_W_REG_CLIENT1__MASK;
 }
-#define MDP5_MDP_SMP_ALLOC_R_REG_CLIENT2__MASK			0x00ff0000
-#define MDP5_MDP_SMP_ALLOC_R_REG_CLIENT2__SHIFT			16
-static inline uint32_t MDP5_MDP_SMP_ALLOC_R_REG_CLIENT2(uint32_t val)
+#define MDP5_SMP_ALLOC_W_REG_CLIENT2__MASK			0x00ff0000
+#define MDP5_SMP_ALLOC_W_REG_CLIENT2__SHIFT			16
+static inline uint32_t MDP5_SMP_ALLOC_W_REG_CLIENT2(uint32_t val)
 {
-	return ((val) << MDP5_MDP_SMP_ALLOC_R_REG_CLIENT2__SHIFT) & MDP5_MDP_SMP_ALLOC_R_REG_CLIENT2__MASK;
+	return ((val) << MDP5_SMP_ALLOC_W_REG_CLIENT2__SHIFT) & MDP5_SMP_ALLOC_W_REG_CLIENT2__MASK;
+}
+
+static inline uint32_t REG_MDP5_SMP_ALLOC_R(uint32_t i0) { return 0x00000130 + 0x4*i0; }
+
+static inline uint32_t REG_MDP5_SMP_ALLOC_R_REG(uint32_t i0) { return 0x00000130 + 0x4*i0; }
+#define MDP5_SMP_ALLOC_R_REG_CLIENT0__MASK			0x000000ff
+#define MDP5_SMP_ALLOC_R_REG_CLIENT0__SHIFT			0
+static inline uint32_t MDP5_SMP_ALLOC_R_REG_CLIENT0(uint32_t val)
+{
+	return ((val) << MDP5_SMP_ALLOC_R_REG_CLIENT0__SHIFT) & MDP5_SMP_ALLOC_R_REG_CLIENT0__MASK;
+}
+#define MDP5_SMP_ALLOC_R_REG_CLIENT1__MASK			0x0000ff00
+#define MDP5_SMP_ALLOC_R_REG_CLIENT1__SHIFT			8
+static inline uint32_t MDP5_SMP_ALLOC_R_REG_CLIENT1(uint32_t val)
+{
+	return ((val) << MDP5_SMP_ALLOC_R_REG_CLIENT1__SHIFT) & MDP5_SMP_ALLOC_R_REG_CLIENT1__MASK;
+}
+#define MDP5_SMP_ALLOC_R_REG_CLIENT2__MASK			0x00ff0000
+#define MDP5_SMP_ALLOC_R_REG_CLIENT2__SHIFT			16
+static inline uint32_t MDP5_SMP_ALLOC_R_REG_CLIENT2(uint32_t val)
+{
+	return ((val) << MDP5_SMP_ALLOC_R_REG_CLIENT2__SHIFT) & MDP5_SMP_ALLOC_R_REG_CLIENT2__MASK;
 }
 
 static inline uint32_t __offset_IGC(enum mdp5_igc_type idx)
@@ -321,35 +313,35 @@ static inline uint32_t __offset_IGC(enum mdp5_igc_type idx)
 		default: return INVALID_IDX(idx);
 	}
 }
-static inline uint32_t REG_MDP5_MDP_IGC(uint32_t i0, enum mdp5_igc_type i1) { return 0x00000000 + __offset_MDP(i0) + __offset_IGC(i1); }
+static inline uint32_t REG_MDP5_IGC(enum mdp5_igc_type i0) { return 0x00000000 + __offset_IGC(i0); }
 
-static inline uint32_t REG_MDP5_MDP_IGC_LUT(uint32_t i0, enum mdp5_igc_type i1, uint32_t i2) { return 0x00000000 + __offset_MDP(i0) + __offset_IGC(i1) + 0x4*i2; }
+static inline uint32_t REG_MDP5_IGC_LUT(enum mdp5_igc_type i0, uint32_t i1) { return 0x00000000 + __offset_IGC(i0) + 0x4*i1; }
 
-static inline uint32_t REG_MDP5_MDP_IGC_LUT_REG(uint32_t i0, enum mdp5_igc_type i1, uint32_t i2) { return 0x00000000 + __offset_MDP(i0) + __offset_IGC(i1) + 0x4*i2; }
-#define MDP5_MDP_IGC_LUT_REG_VAL__MASK				0x00000fff
-#define MDP5_MDP_IGC_LUT_REG_VAL__SHIFT				0
-static inline uint32_t MDP5_MDP_IGC_LUT_REG_VAL(uint32_t val)
+static inline uint32_t REG_MDP5_IGC_LUT_REG(enum mdp5_igc_type i0, uint32_t i1) { return 0x00000000 + __offset_IGC(i0) + 0x4*i1; }
+#define MDP5_IGC_LUT_REG_VAL__MASK				0x00000fff
+#define MDP5_IGC_LUT_REG_VAL__SHIFT				0
+static inline uint32_t MDP5_IGC_LUT_REG_VAL(uint32_t val)
 {
-	return ((val) << MDP5_MDP_IGC_LUT_REG_VAL__SHIFT) & MDP5_MDP_IGC_LUT_REG_VAL__MASK;
+	return ((val) << MDP5_IGC_LUT_REG_VAL__SHIFT) & MDP5_IGC_LUT_REG_VAL__MASK;
 }
-#define MDP5_MDP_IGC_LUT_REG_INDEX_UPDATE			0x02000000
-#define MDP5_MDP_IGC_LUT_REG_DISABLE_PIPE_0			0x10000000
-#define MDP5_MDP_IGC_LUT_REG_DISABLE_PIPE_1			0x20000000
-#define MDP5_MDP_IGC_LUT_REG_DISABLE_PIPE_2			0x40000000
+#define MDP5_IGC_LUT_REG_INDEX_UPDATE				0x02000000
+#define MDP5_IGC_LUT_REG_DISABLE_PIPE_0				0x10000000
+#define MDP5_IGC_LUT_REG_DISABLE_PIPE_1				0x20000000
+#define MDP5_IGC_LUT_REG_DISABLE_PIPE_2				0x40000000
 
-static inline uint32_t REG_MDP5_MDP_SPLIT_DPL_EN(uint32_t i0) { return 0x000002f4 + __offset_MDP(i0); }
+#define REG_MDP5_SPLIT_DPL_EN					0x000002f4
 
-static inline uint32_t REG_MDP5_MDP_SPLIT_DPL_UPPER(uint32_t i0) { return 0x000002f8 + __offset_MDP(i0); }
-#define MDP5_MDP_SPLIT_DPL_UPPER_SMART_PANEL			0x00000002
-#define MDP5_MDP_SPLIT_DPL_UPPER_SMART_PANEL_FREE_RUN		0x00000004
-#define MDP5_MDP_SPLIT_DPL_UPPER_INTF1_SW_TRG_MUX		0x00000010
-#define MDP5_MDP_SPLIT_DPL_UPPER_INTF2_SW_TRG_MUX		0x00000100
+#define REG_MDP5_SPLIT_DPL_UPPER				0x000002f8
+#define MDP5_SPLIT_DPL_UPPER_SMART_PANEL			0x00000002
+#define MDP5_SPLIT_DPL_UPPER_SMART_PANEL_FREE_RUN		0x00000004
+#define MDP5_SPLIT_DPL_UPPER_INTF1_SW_TRG_MUX			0x00000010
+#define MDP5_SPLIT_DPL_UPPER_INTF2_SW_TRG_MUX			0x00000100
 
-static inline uint32_t REG_MDP5_MDP_SPLIT_DPL_LOWER(uint32_t i0) { return 0x000003f0 + __offset_MDP(i0); }
-#define MDP5_MDP_SPLIT_DPL_LOWER_SMART_PANEL			0x00000002
-#define MDP5_MDP_SPLIT_DPL_LOWER_SMART_PANEL_FREE_RUN		0x00000004
-#define MDP5_MDP_SPLIT_DPL_LOWER_INTF1_TG_SYNC			0x00000010
-#define MDP5_MDP_SPLIT_DPL_LOWER_INTF2_TG_SYNC			0x00000100
+#define REG_MDP5_SPLIT_DPL_LOWER				0x000003f0
+#define MDP5_SPLIT_DPL_LOWER_SMART_PANEL			0x00000002
+#define MDP5_SPLIT_DPL_LOWER_SMART_PANEL_FREE_RUN		0x00000004
+#define MDP5_SPLIT_DPL_LOWER_INTF1_TG_SYNC			0x00000010
+#define MDP5_SPLIT_DPL_LOWER_INTF2_TG_SYNC			0x00000100
 
 static inline uint32_t __offset_CTL(uint32_t idx)
 {
@@ -381,49 +373,49 @@ static inline uint32_t REG_MDP5_CTL_LAYER(uint32_t i0, uint32_t i1) { return 0x0
 static inline uint32_t REG_MDP5_CTL_LAYER_REG(uint32_t i0, uint32_t i1) { return 0x00000000 + __offset_CTL(i0) + __offset_LAYER(i1); }
 #define MDP5_CTL_LAYER_REG_VIG0__MASK				0x00000007
 #define MDP5_CTL_LAYER_REG_VIG0__SHIFT				0
-static inline uint32_t MDP5_CTL_LAYER_REG_VIG0(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_VIG0(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_VIG0__SHIFT) & MDP5_CTL_LAYER_REG_VIG0__MASK;
 }
 #define MDP5_CTL_LAYER_REG_VIG1__MASK				0x00000038
 #define MDP5_CTL_LAYER_REG_VIG1__SHIFT				3
-static inline uint32_t MDP5_CTL_LAYER_REG_VIG1(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_VIG1(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_VIG1__SHIFT) & MDP5_CTL_LAYER_REG_VIG1__MASK;
 }
 #define MDP5_CTL_LAYER_REG_VIG2__MASK				0x000001c0
 #define MDP5_CTL_LAYER_REG_VIG2__SHIFT				6
-static inline uint32_t MDP5_CTL_LAYER_REG_VIG2(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_VIG2(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_VIG2__SHIFT) & MDP5_CTL_LAYER_REG_VIG2__MASK;
 }
 #define MDP5_CTL_LAYER_REG_RGB0__MASK				0x00000e00
 #define MDP5_CTL_LAYER_REG_RGB0__SHIFT				9
-static inline uint32_t MDP5_CTL_LAYER_REG_RGB0(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_RGB0(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_RGB0__SHIFT) & MDP5_CTL_LAYER_REG_RGB0__MASK;
 }
 #define MDP5_CTL_LAYER_REG_RGB1__MASK				0x00007000
 #define MDP5_CTL_LAYER_REG_RGB1__SHIFT				12
-static inline uint32_t MDP5_CTL_LAYER_REG_RGB1(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_RGB1(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_RGB1__SHIFT) & MDP5_CTL_LAYER_REG_RGB1__MASK;
 }
 #define MDP5_CTL_LAYER_REG_RGB2__MASK				0x00038000
 #define MDP5_CTL_LAYER_REG_RGB2__SHIFT				15
-static inline uint32_t MDP5_CTL_LAYER_REG_RGB2(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_RGB2(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_RGB2__SHIFT) & MDP5_CTL_LAYER_REG_RGB2__MASK;
 }
 #define MDP5_CTL_LAYER_REG_DMA0__MASK				0x001c0000
 #define MDP5_CTL_LAYER_REG_DMA0__SHIFT				18
-static inline uint32_t MDP5_CTL_LAYER_REG_DMA0(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_DMA0(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_DMA0__SHIFT) & MDP5_CTL_LAYER_REG_DMA0__MASK;
 }
 #define MDP5_CTL_LAYER_REG_DMA1__MASK				0x00e00000
 #define MDP5_CTL_LAYER_REG_DMA1__SHIFT				21
-static inline uint32_t MDP5_CTL_LAYER_REG_DMA1(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_DMA1(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_DMA1__SHIFT) & MDP5_CTL_LAYER_REG_DMA1__MASK;
 }
@@ -431,13 +423,13 @@ static inline uint32_t MDP5_CTL_LAYER_REG_DMA1(enum mdp_mixer_stage_id val)
 #define MDP5_CTL_LAYER_REG_CURSOR_OUT				0x02000000
 #define MDP5_CTL_LAYER_REG_VIG3__MASK				0x1c000000
 #define MDP5_CTL_LAYER_REG_VIG3__SHIFT				26
-static inline uint32_t MDP5_CTL_LAYER_REG_VIG3(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_VIG3(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_VIG3__SHIFT) & MDP5_CTL_LAYER_REG_VIG3__MASK;
 }
 #define MDP5_CTL_LAYER_REG_RGB3__MASK				0xe0000000
 #define MDP5_CTL_LAYER_REG_RGB3__SHIFT				29
-static inline uint32_t MDP5_CTL_LAYER_REG_RGB3(enum mdp_mixer_stage_id val)
+static inline uint32_t MDP5_CTL_LAYER_REG_RGB3(uint32_t val)
 {
 	return ((val) << MDP5_CTL_LAYER_REG_RGB3__SHIFT) & MDP5_CTL_LAYER_REG_RGB3__MASK;
 }
@@ -498,6 +490,44 @@ static inline uint32_t REG_MDP5_CTL_FLUSH(uint32_t i0) { return 0x00000018 + __o
 static inline uint32_t REG_MDP5_CTL_START(uint32_t i0) { return 0x0000001c + __offset_CTL(i0); }
 
 static inline uint32_t REG_MDP5_CTL_PACK_3D(uint32_t i0) { return 0x00000020 + __offset_CTL(i0); }
+
+static inline uint32_t __offset_LAYER_EXT(uint32_t idx)
+{
+	switch (idx) {
+		case 0: return 0x00000040;
+		case 1: return 0x00000044;
+		case 2: return 0x00000048;
+		case 3: return 0x0000004c;
+		case 4: return 0x00000050;
+		case 5: return 0x00000054;
+		default: return INVALID_IDX(idx);
+	}
+}
+static inline uint32_t REG_MDP5_CTL_LAYER_EXT(uint32_t i0, uint32_t i1) { return 0x00000000 + __offset_CTL(i0) + __offset_LAYER_EXT(i1); }
+
+static inline uint32_t REG_MDP5_CTL_LAYER_EXT_REG(uint32_t i0, uint32_t i1) { return 0x00000000 + __offset_CTL(i0) + __offset_LAYER_EXT(i1); }
+#define MDP5_CTL_LAYER_EXT_REG_VIG0_BIT3			0x00000001
+#define MDP5_CTL_LAYER_EXT_REG_VIG1_BIT3			0x00000004
+#define MDP5_CTL_LAYER_EXT_REG_VIG2_BIT3			0x00000010
+#define MDP5_CTL_LAYER_EXT_REG_VIG3_BIT3			0x00000040
+#define MDP5_CTL_LAYER_EXT_REG_RGB0_BIT3			0x00000100
+#define MDP5_CTL_LAYER_EXT_REG_RGB1_BIT3			0x00000400
+#define MDP5_CTL_LAYER_EXT_REG_RGB2_BIT3			0x00001000
+#define MDP5_CTL_LAYER_EXT_REG_RGB3_BIT3			0x00004000
+#define MDP5_CTL_LAYER_EXT_REG_DMA0_BIT3			0x00010000
+#define MDP5_CTL_LAYER_EXT_REG_DMA1_BIT3			0x00040000
+#define MDP5_CTL_LAYER_EXT_REG_CURSOR0__MASK			0x00f00000
+#define MDP5_CTL_LAYER_EXT_REG_CURSOR0__SHIFT			20
+static inline uint32_t MDP5_CTL_LAYER_EXT_REG_CURSOR0(enum mdp_mixer_stage_id val)
+{
+	return ((val) << MDP5_CTL_LAYER_EXT_REG_CURSOR0__SHIFT) & MDP5_CTL_LAYER_EXT_REG_CURSOR0__MASK;
+}
+#define MDP5_CTL_LAYER_EXT_REG_CURSOR1__MASK			0x3c000000
+#define MDP5_CTL_LAYER_EXT_REG_CURSOR1__SHIFT			26
+static inline uint32_t MDP5_CTL_LAYER_EXT_REG_CURSOR1(enum mdp_mixer_stage_id val)
+{
+	return ((val) << MDP5_CTL_LAYER_EXT_REG_CURSOR1__SHIFT) & MDP5_CTL_LAYER_EXT_REG_CURSOR1__MASK;
+}
 
 static inline uint32_t __offset_PIPE(enum mdp5_pipe idx)
 {
@@ -803,11 +833,11 @@ static inline uint32_t MDP5_PIPE_SRC_FORMAT_UNPACK_COUNT(uint32_t val)
 }
 #define MDP5_PIPE_SRC_FORMAT_UNPACK_TIGHT			0x00020000
 #define MDP5_PIPE_SRC_FORMAT_UNPACK_ALIGN_MSB			0x00040000
-#define MDP5_PIPE_SRC_FORMAT_NUM_PLANES__MASK			0x00180000
-#define MDP5_PIPE_SRC_FORMAT_NUM_PLANES__SHIFT			19
-static inline uint32_t MDP5_PIPE_SRC_FORMAT_NUM_PLANES(enum mdp_fetch_type val)
+#define MDP5_PIPE_SRC_FORMAT_FETCH_TYPE__MASK			0x00180000
+#define MDP5_PIPE_SRC_FORMAT_FETCH_TYPE__SHIFT			19
+static inline uint32_t MDP5_PIPE_SRC_FORMAT_FETCH_TYPE(enum mdp_fetch_type val)
 {
-	return ((val) << MDP5_PIPE_SRC_FORMAT_NUM_PLANES__SHIFT) & MDP5_PIPE_SRC_FORMAT_NUM_PLANES__MASK;
+	return ((val) << MDP5_PIPE_SRC_FORMAT_FETCH_TYPE__SHIFT) & MDP5_PIPE_SRC_FORMAT_FETCH_TYPE__MASK;
 }
 #define MDP5_PIPE_SRC_FORMAT_CHROMA_SAMP__MASK			0x01800000
 #define MDP5_PIPE_SRC_FORMAT_CHROMA_SAMP__SHIFT			23
@@ -857,6 +887,7 @@ static inline uint32_t MDP5_PIPE_SRC_OP_MODE_BWC(enum mdp5_pipe_bwc val)
 #define MDP5_PIPE_SRC_OP_MODE_IGC_ROM_1				0x00040000
 #define MDP5_PIPE_SRC_OP_MODE_DEINTERLACE			0x00400000
 #define MDP5_PIPE_SRC_OP_MODE_DEINTERLACE_ODD			0x00800000
+#define MDP5_PIPE_SRC_OP_MODE_SW_PIX_EXT_OVERRIDE		0x80000000
 
 static inline uint32_t REG_MDP5_PIPE_SRC_CONSTANT_COLOR(enum mdp5_pipe i0) { return 0x0000003c + __offset_PIPE(i0); }
 
@@ -894,44 +925,121 @@ static inline uint32_t MDP5_PIPE_DECIMATION_HORZ(uint32_t val)
 	return ((val) << MDP5_PIPE_DECIMATION_HORZ__SHIFT) & MDP5_PIPE_DECIMATION_HORZ__MASK;
 }
 
+static inline uint32_t __offset_SW_PIX_EXT(enum mdp_component_type idx)
+{
+	switch (idx) {
+		case COMP_0: return 0x00000100;
+		case COMP_1_2: return 0x00000110;
+		case COMP_3: return 0x00000120;
+		default: return INVALID_IDX(idx);
+	}
+}
+static inline uint32_t REG_MDP5_PIPE_SW_PIX_EXT(enum mdp5_pipe i0, enum mdp_component_type i1) { return 0x00000000 + __offset_PIPE(i0) + __offset_SW_PIX_EXT(i1); }
+
+static inline uint32_t REG_MDP5_PIPE_SW_PIX_EXT_LR(enum mdp5_pipe i0, enum mdp_component_type i1) { return 0x00000000 + __offset_PIPE(i0) + __offset_SW_PIX_EXT(i1); }
+#define MDP5_PIPE_SW_PIX_EXT_LR_LEFT_RPT__MASK			0x000000ff
+#define MDP5_PIPE_SW_PIX_EXT_LR_LEFT_RPT__SHIFT			0
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_LR_LEFT_RPT(uint32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_LR_LEFT_RPT__SHIFT) & MDP5_PIPE_SW_PIX_EXT_LR_LEFT_RPT__MASK;
+}
+#define MDP5_PIPE_SW_PIX_EXT_LR_LEFT_OVF__MASK			0x0000ff00
+#define MDP5_PIPE_SW_PIX_EXT_LR_LEFT_OVF__SHIFT			8
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_LR_LEFT_OVF(int32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_LR_LEFT_OVF__SHIFT) & MDP5_PIPE_SW_PIX_EXT_LR_LEFT_OVF__MASK;
+}
+#define MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_RPT__MASK			0x00ff0000
+#define MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_RPT__SHIFT		16
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_RPT(uint32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_RPT__SHIFT) & MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_RPT__MASK;
+}
+#define MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_OVF__MASK			0xff000000
+#define MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_OVF__SHIFT		24
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_OVF(int32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_OVF__SHIFT) & MDP5_PIPE_SW_PIX_EXT_LR_RIGHT_OVF__MASK;
+}
+
+static inline uint32_t REG_MDP5_PIPE_SW_PIX_EXT_TB(enum mdp5_pipe i0, enum mdp_component_type i1) { return 0x00000004 + __offset_PIPE(i0) + __offset_SW_PIX_EXT(i1); }
+#define MDP5_PIPE_SW_PIX_EXT_TB_TOP_RPT__MASK			0x000000ff
+#define MDP5_PIPE_SW_PIX_EXT_TB_TOP_RPT__SHIFT			0
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_TB_TOP_RPT(uint32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_TB_TOP_RPT__SHIFT) & MDP5_PIPE_SW_PIX_EXT_TB_TOP_RPT__MASK;
+}
+#define MDP5_PIPE_SW_PIX_EXT_TB_TOP_OVF__MASK			0x0000ff00
+#define MDP5_PIPE_SW_PIX_EXT_TB_TOP_OVF__SHIFT			8
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_TB_TOP_OVF(int32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_TB_TOP_OVF__SHIFT) & MDP5_PIPE_SW_PIX_EXT_TB_TOP_OVF__MASK;
+}
+#define MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_RPT__MASK		0x00ff0000
+#define MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_RPT__SHIFT		16
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_RPT(uint32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_RPT__SHIFT) & MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_RPT__MASK;
+}
+#define MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_OVF__MASK		0xff000000
+#define MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_OVF__SHIFT		24
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_OVF(int32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_OVF__SHIFT) & MDP5_PIPE_SW_PIX_EXT_TB_BOTTOM_OVF__MASK;
+}
+
+static inline uint32_t REG_MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS(enum mdp5_pipe i0, enum mdp_component_type i1) { return 0x00000008 + __offset_PIPE(i0) + __offset_SW_PIX_EXT(i1); }
+#define MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_LEFT_RIGHT__MASK	0x0000ffff
+#define MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_LEFT_RIGHT__SHIFT	0
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_LEFT_RIGHT(uint32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_LEFT_RIGHT__SHIFT) & MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_LEFT_RIGHT__MASK;
+}
+#define MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_TOP_BOTTOM__MASK	0xffff0000
+#define MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_TOP_BOTTOM__SHIFT	16
+static inline uint32_t MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_TOP_BOTTOM(uint32_t val)
+{
+	return ((val) << MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_TOP_BOTTOM__SHIFT) & MDP5_PIPE_SW_PIX_EXT_REQ_PIXELS_TOP_BOTTOM__MASK;
+}
+
 static inline uint32_t REG_MDP5_PIPE_SCALE_CONFIG(enum mdp5_pipe i0) { return 0x00000204 + __offset_PIPE(i0); }
 #define MDP5_PIPE_SCALE_CONFIG_SCALEX_EN			0x00000001
 #define MDP5_PIPE_SCALE_CONFIG_SCALEY_EN			0x00000002
-#define MDP5_PIPE_SCALE_CONFIG_SCALEX_MIN_FILTER__MASK		0x00000300
-#define MDP5_PIPE_SCALE_CONFIG_SCALEX_MIN_FILTER__SHIFT		8
-static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEX_MIN_FILTER(enum mdp5_scale_filter val)
+#define MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_0__MASK	0x00000300
+#define MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_0__SHIFT	8
+static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_0(enum mdp5_scale_filter val)
 {
-	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEX_MIN_FILTER__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEX_MIN_FILTER__MASK;
+	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_0__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_0__MASK;
 }
-#define MDP5_PIPE_SCALE_CONFIG_SCALEY_MIN_FILTER__MASK		0x00000c00
-#define MDP5_PIPE_SCALE_CONFIG_SCALEY_MIN_FILTER__SHIFT		10
-static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEY_MIN_FILTER(enum mdp5_scale_filter val)
+#define MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_0__MASK	0x00000c00
+#define MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_0__SHIFT	10
+static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_0(enum mdp5_scale_filter val)
 {
-	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEY_MIN_FILTER__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEY_MIN_FILTER__MASK;
+	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_0__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_0__MASK;
 }
-#define MDP5_PIPE_SCALE_CONFIG_SCALEX_CR_FILTER__MASK		0x00003000
-#define MDP5_PIPE_SCALE_CONFIG_SCALEX_CR_FILTER__SHIFT		12
-static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEX_CR_FILTER(enum mdp5_scale_filter val)
+#define MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_1_2__MASK	0x00003000
+#define MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_1_2__SHIFT	12
+static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_1_2(enum mdp5_scale_filter val)
 {
-	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEX_CR_FILTER__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEX_CR_FILTER__MASK;
+	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_1_2__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_1_2__MASK;
 }
-#define MDP5_PIPE_SCALE_CONFIG_SCALEY_CR_FILTER__MASK		0x0000c000
-#define MDP5_PIPE_SCALE_CONFIG_SCALEY_CR_FILTER__SHIFT		14
-static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEY_CR_FILTER(enum mdp5_scale_filter val)
+#define MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_1_2__MASK	0x0000c000
+#define MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_1_2__SHIFT	14
+static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_1_2(enum mdp5_scale_filter val)
 {
-	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEY_CR_FILTER__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEY_CR_FILTER__MASK;
+	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_1_2__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_1_2__MASK;
 }
-#define MDP5_PIPE_SCALE_CONFIG_SCALEX_MAX_FILTER__MASK		0x00030000
-#define MDP5_PIPE_SCALE_CONFIG_SCALEX_MAX_FILTER__SHIFT		16
-static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEX_MAX_FILTER(enum mdp5_scale_filter val)
+#define MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_3__MASK	0x00030000
+#define MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_3__SHIFT	16
+static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_3(enum mdp5_scale_filter val)
 {
-	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEX_MAX_FILTER__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEX_MAX_FILTER__MASK;
+	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_3__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEX_FILTER_COMP_3__MASK;
 }
-#define MDP5_PIPE_SCALE_CONFIG_SCALEY_MAX_FILTER__MASK		0x000c0000
-#define MDP5_PIPE_SCALE_CONFIG_SCALEY_MAX_FILTER__SHIFT		18
-static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEY_MAX_FILTER(enum mdp5_scale_filter val)
+#define MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_3__MASK	0x000c0000
+#define MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_3__SHIFT	18
+static inline uint32_t MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_3(enum mdp5_scale_filter val)
 {
-	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEY_MAX_FILTER__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEY_MAX_FILTER__MASK;
+	return ((val) << MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_3__SHIFT) & MDP5_PIPE_SCALE_CONFIG_SCALEY_FILTER_COMP_3__MASK;
 }
 
 static inline uint32_t REG_MDP5_PIPE_SCALE_PHASE_STEP_X(enum mdp5_pipe i0) { return 0x00000210 + __offset_PIPE(i0); }
@@ -984,9 +1092,22 @@ static inline uint32_t REG_MDP5_LM_BORDER_COLOR_0(uint32_t i0) { return 0x000000
 
 static inline uint32_t REG_MDP5_LM_BORDER_COLOR_1(uint32_t i0) { return 0x00000010 + __offset_LM(i0); }
 
-static inline uint32_t REG_MDP5_LM_BLEND(uint32_t i0, uint32_t i1) { return 0x00000020 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t __offset_BLEND(uint32_t idx)
+{
+	switch (idx) {
+		case 0: return 0x00000020;
+		case 1: return 0x00000050;
+		case 2: return 0x00000080;
+		case 3: return 0x000000b0;
+		case 4: return 0x00000230;
+		case 5: return 0x00000260;
+		case 6: return 0x00000290;
+		default: return INVALID_IDX(idx);
+	}
+}
+static inline uint32_t REG_MDP5_LM_BLEND(uint32_t i0, uint32_t i1) { return 0x00000000 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_OP_MODE(uint32_t i0, uint32_t i1) { return 0x00000020 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_OP_MODE(uint32_t i0, uint32_t i1) { return 0x00000000 + __offset_LM(i0) + __offset_BLEND(i1); }
 #define MDP5_LM_BLEND_OP_MODE_FG_ALPHA__MASK			0x00000003
 #define MDP5_LM_BLEND_OP_MODE_FG_ALPHA__SHIFT			0
 static inline uint32_t MDP5_LM_BLEND_OP_MODE_FG_ALPHA(enum mdp_alpha_type val)
@@ -1008,25 +1129,25 @@ static inline uint32_t MDP5_LM_BLEND_OP_MODE_BG_ALPHA(enum mdp_alpha_type val)
 #define MDP5_LM_BLEND_OP_MODE_BG_INV_MOD_ALPHA			0x00001000
 #define MDP5_LM_BLEND_OP_MODE_BG_TRANSP_EN			0x00002000
 
-static inline uint32_t REG_MDP5_LM_BLEND_FG_ALPHA(uint32_t i0, uint32_t i1) { return 0x00000024 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_FG_ALPHA(uint32_t i0, uint32_t i1) { return 0x00000004 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_BG_ALPHA(uint32_t i0, uint32_t i1) { return 0x00000028 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_BG_ALPHA(uint32_t i0, uint32_t i1) { return 0x00000008 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_LOW0(uint32_t i0, uint32_t i1) { return 0x0000002c + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_LOW0(uint32_t i0, uint32_t i1) { return 0x0000000c + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_LOW1(uint32_t i0, uint32_t i1) { return 0x00000030 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_LOW1(uint32_t i0, uint32_t i1) { return 0x00000010 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_HIGH0(uint32_t i0, uint32_t i1) { return 0x00000034 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_HIGH0(uint32_t i0, uint32_t i1) { return 0x00000014 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_HIGH1(uint32_t i0, uint32_t i1) { return 0x00000038 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_FG_TRANSP_HIGH1(uint32_t i0, uint32_t i1) { return 0x00000018 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_LOW0(uint32_t i0, uint32_t i1) { return 0x0000003c + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_LOW0(uint32_t i0, uint32_t i1) { return 0x0000001c + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_LOW1(uint32_t i0, uint32_t i1) { return 0x00000040 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_LOW1(uint32_t i0, uint32_t i1) { return 0x00000020 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_HIGH0(uint32_t i0, uint32_t i1) { return 0x00000044 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_HIGH0(uint32_t i0, uint32_t i1) { return 0x00000024 + __offset_LM(i0) + __offset_BLEND(i1); }
 
-static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_HIGH1(uint32_t i0, uint32_t i1) { return 0x00000048 + __offset_LM(i0) + 0x30*i1; }
+static inline uint32_t REG_MDP5_LM_BLEND_BG_TRANSP_HIGH1(uint32_t i0, uint32_t i1) { return 0x00000028 + __offset_LM(i0) + __offset_BLEND(i1); }
 
 static inline uint32_t REG_MDP5_LM_CURSOR_IMG_SIZE(uint32_t i0) { return 0x000000e0 + __offset_LM(i0); }
 #define MDP5_LM_CURSOR_IMG_SIZE_SRC_W__MASK			0x0000ffff
@@ -1260,6 +1381,13 @@ static inline uint32_t REG_MDP5_PP_FBC_LOSSY_MODE(uint32_t i0) { return 0x000000
 static inline uint32_t __offset_WB(uint32_t idx)
 {
 	switch (idx) {
+#if 0  /* TEMPORARY until patch that adds wb.base[] is merged */
+		case 0: return (mdp5_cfg->wb.base[0]);
+		case 1: return (mdp5_cfg->wb.base[1]);
+		case 2: return (mdp5_cfg->wb.base[2]);
+		case 3: return (mdp5_cfg->wb.base[3]);
+		case 4: return (mdp5_cfg->wb.base[4]);
+#endif
 		default: return INVALID_IDX(idx);
 	}
 }

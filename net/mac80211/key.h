@@ -44,11 +44,15 @@ enum ieee80211_internal_tkip_state {
 };
 
 struct tkip_ctx {
-	u32 iv32;	/* current iv32 */
-	u16 iv16;	/* current iv16 */
 	u16 p1k[5];	/* p1k cache */
 	u32 p1k_iv32;	/* iv32 for which p1k computed */
 	enum ieee80211_internal_tkip_state state;
+};
+
+struct tkip_ctx_rx {
+	struct tkip_ctx ctx;
+	u32 iv32;	/* current iv32 */
+	u16 iv16;	/* current iv16 */
 };
 
 struct ieee80211_key {
@@ -71,7 +75,7 @@ struct ieee80211_key {
 			struct tkip_ctx tx;
 
 			/* last received RSC */
-			struct tkip_ctx rx[IEEE80211_NUM_TIDS];
+			struct tkip_ctx_rx rx[IEEE80211_NUM_TIDS];
 
 			/* number of mic failures */
 			u32 mic_failures;
@@ -114,9 +118,6 @@ struct ieee80211_key {
 			u8 rx_pn[IEEE80211_NUM_TIDS + 1][IEEE80211_MAX_PN_LEN];
 		} gen;
 	} u;
-
-	/* number of times this key has been used */
-	int tx_rx_count;
 
 #ifdef CONFIG_MAC80211_DEBUGFS
 	struct {

@@ -765,13 +765,14 @@ static struct snd_soc_codec_driver adau1701_codec_drv = {
 	.set_bias_level		= adau1701_set_bias_level,
 	.idle_bias_off		= true,
 
-	.controls		= adau1701_controls,
-	.num_controls		= ARRAY_SIZE(adau1701_controls),
-	.dapm_widgets		= adau1701_dapm_widgets,
-	.num_dapm_widgets	= ARRAY_SIZE(adau1701_dapm_widgets),
-	.dapm_routes		= adau1701_dapm_routes,
-	.num_dapm_routes	= ARRAY_SIZE(adau1701_dapm_routes),
-
+	.component_driver = {
+		.controls		= adau1701_controls,
+		.num_controls		= ARRAY_SIZE(adau1701_controls),
+		.dapm_widgets		= adau1701_dapm_widgets,
+		.num_dapm_widgets	= ARRAY_SIZE(adau1701_dapm_widgets),
+		.dapm_routes		= adau1701_dapm_routes,
+		.num_dapm_routes	= ARRAY_SIZE(adau1701_dapm_routes),
+	},
 	.set_sysclk		= adau1701_set_sysclk,
 };
 
@@ -915,7 +916,6 @@ MODULE_DEVICE_TABLE(i2c, adau1701_i2c_id);
 static struct i2c_driver adau1701_i2c_driver = {
 	.driver = {
 		.name	= "adau1701",
-		.owner	= THIS_MODULE,
 		.of_match_table	= of_match_ptr(adau1701_dt_ids),
 	},
 	.probe		= adau1701_i2c_probe,

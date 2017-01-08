@@ -29,6 +29,9 @@
 #include <asm/bitsperlong.h>
 
 #ifdef __KERNEL__
+struct device;
+int eth_platform_get_mac_address(struct device *dev, u8 *mac_addr);
+unsigned char *arch_get_platform_get_mac_address(void);
 u32 eth_get_headlen(void *data, unsigned int max_len);
 __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev);
 extern const struct header_ops eth_header_ops;
@@ -76,7 +79,7 @@ static inline bool is_link_local_ether_addr(const u8 *addr)
 
 #if defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS)
 	return (((*(const u32 *)addr) ^ (*(const u32 *)b)) |
-		((a[2] ^ b[2]) & m)) == 0;
+		(__force int)((a[2] ^ b[2]) & m)) == 0;
 #else
 	return ((a[0] ^ b[0]) | (a[1] ^ b[1]) | ((a[2] ^ b[2]) & m)) == 0;
 #endif
@@ -368,6 +371,29 @@ static inline bool ether_addr_equal_unaligned(const u8 *addr1, const u8 *addr2)
 #else
 	return memcmp(addr1, addr2, ETH_ALEN) == 0;
 #endif
+}
+
+/**
+ * ether_addr_equal_masked - Compare two Ethernet addresses with a mask
+ * @addr1: Pointer to a six-byte array containing the 1st Ethernet address
+ * @addr2: Pointer to a six-byte array containing the 2nd Ethernet address
+ * @mask: Pointer to a six-byte array containing the Ethernet address bitmask
+ *
+ * Compare two Ethernet addresses with a mask, returns true if for every bit
+ * set in the bitmask the equivalent bits in the ethernet addresses are equal.
+ * Using a mask with all bits set is a slower ether_addr_equal.
+ */
+static inline bool ether_addr_equal_masked(const u8 *addr1, const u8 *addr2,
+					   const u8 *mask)
+{
+	int i;
+
+	for (i = 0; i < ETH_ALEN; i++) {
+		if ((addr1[i] ^ addr2[i]) & mask[i])
+			return false;
+	}
+
+	return true;
 }
 
 /**

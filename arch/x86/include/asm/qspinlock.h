@@ -32,6 +32,12 @@ static inline void queued_spin_unlock(struct qspinlock *lock)
 {
 	pv_queued_spin_unlock(lock);
 }
+
+#define vcpu_is_preempted vcpu_is_preempted
+static inline bool vcpu_is_preempted(int cpu)
+{
+	return pv_vcpu_is_preempted(cpu);
+}
 #else
 static inline void queued_spin_unlock(struct qspinlock *lock)
 {
@@ -39,18 +45,27 @@ static inline void queued_spin_unlock(struct qspinlock *lock)
 }
 #endif
 
-#define virt_queued_spin_lock virt_queued_spin_lock
-
-static inline bool virt_queued_spin_lock(struct qspinlock *lock)
+#ifdef CONFIG_PARAVIRT
+#define virt_spin_lock virt_spin_lock
+static inline bool virt_spin_lock(struct qspinlock *lock)
 {
 	if (!static_cpu_has(X86_FEATURE_HYPERVISOR))
 		return false;
 
-	while (atomic_cmpxchg(&lock->val, 0, _Q_LOCKED_VAL) != 0)
-		cpu_relax();
+	/*
+	 * On hypervisors without PARAVIRT_SPINLOCKS support we fall
+	 * back to a Test-and-Set spinlock, because fair locks have
+	 * horrible lock 'holder' preemption issues.
+	 */
+
+	do {
+		while (atomic_read(&lock->val) != 0)
+			cpu_relax();
+	} while (atomic_cmpxchg(&lock->val, 0, _Q_LOCKED_VAL) != 0);
 
 	return true;
 }
+#endif /* CONFIG_PARAVIRT */
 
 #include <asm-generic/qspinlock.h>
 

@@ -11,6 +11,10 @@
  * clock framework for Samsung platforms.
 */
 
+#include <linux/slab.h>
+#include <linux/clkdev.h>
+#include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <linux/of_address.h>
 #include <linux/syscore_ops.h>
 
@@ -342,9 +346,9 @@ static struct syscore_ops samsung_clk_syscore_ops = {
 	.resume = samsung_clk_resume,
 };
 
-static void samsung_clk_sleep_init(void __iomem *reg_base,
-		const unsigned long *rdump,
-		unsigned long nr_rdump)
+void samsung_clk_sleep_init(void __iomem *reg_base,
+			const unsigned long *rdump,
+			unsigned long nr_rdump)
 {
 	struct samsung_clock_reg_cache *reg_cache;
 
@@ -366,9 +370,9 @@ static void samsung_clk_sleep_init(void __iomem *reg_base,
 }
 
 #else
-static void samsung_clk_sleep_init(void __iomem *reg_base,
-		const unsigned long *rdump,
-		unsigned long nr_rdump) {}
+void samsung_clk_sleep_init(void __iomem *reg_base,
+			const unsigned long *rdump,
+			unsigned long nr_rdump) {}
 #endif
 
 /*
@@ -377,7 +381,7 @@ static void samsung_clk_sleep_init(void __iomem *reg_base,
  */
 struct samsung_clk_provider * __init samsung_cmu_register_one(
 			struct device_node *np,
-			struct samsung_cmu_info *cmu)
+			const struct samsung_cmu_info *cmu)
 {
 	void __iomem *reg_base;
 	struct samsung_clk_provider *ctx;

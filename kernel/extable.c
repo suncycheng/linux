@@ -18,12 +18,11 @@
 #include <linux/ftrace.h>
 #include <linux/memory.h>
 #include <linux/module.h>
-#include <linux/ftrace.h>
 #include <linux/mutex.h>
 #include <linux/init.h>
 
 #include <asm/sections.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 /*
  * mutex protecting text section modification (dynamic code patching).

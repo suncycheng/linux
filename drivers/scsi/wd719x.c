@@ -590,7 +590,7 @@ static inline void wd719x_interrupt_SCB(struct wd719x *wd,
 		dev_dbg(&wd->pdev->dev, "selection timeout\n");
 		break;
 	case WD719X_SUE_RESET:
-		dev_dbg(&wd->pdev->dev, "bus reset occured\n");
+		dev_dbg(&wd->pdev->dev, "bus reset occurred\n");
 		result = DID_RESET;
 		break;
 	case WD719X_SUE_BUSERROR:
@@ -962,7 +962,7 @@ static void wd719x_pci_remove(struct pci_dev *pdev)
 	scsi_host_put(sh);
 }
 
-static DEFINE_PCI_DEVICE_TABLE(wd719x_pci_table) = {
+static const struct pci_device_id wd719x_pci_table[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_WD, 0x3296) },
 	{}
 };

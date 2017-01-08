@@ -37,15 +37,14 @@ static int (*orig_bus_suspend)(struct usb_hcd *hcd);
 
 struct ehci_ci_priv {
 	struct regulator *reg_vbus;
-	struct ci_hdrc *ci;
 };
 
 static int ehci_ci_portpower(struct usb_hcd *hcd, int portnum, bool enable)
 {
 	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
 	struct ehci_ci_priv *priv = (struct ehci_ci_priv *)ehci->priv;
-	struct ci_hdrc *ci = priv->ci;
 	struct device *dev = hcd->self.controller;
+	struct ci_hdrc *ci = dev_get_drvdata(dev);
 	int ret = 0;
 	int port = HCS_N_PORTS(ehci->hcs_params);
 
@@ -78,9 +77,28 @@ static int ehci_ci_portpower(struct usb_hcd *hcd, int portnum, bool enable)
 	return 0;
 };
 
+static int ehci_ci_reset(struct usb_hcd *hcd)
+{
+	struct device *dev = hcd->self.controller;
+	struct ci_hdrc *ci = dev_get_drvdata(dev);
+	struct ehci_hcd *ehci = hcd_to_ehci(hcd);
+	int ret;
+
+	ret = ehci_setup(hcd);
+	if (ret)
+		return ret;
+
+	ehci->need_io_watchdog = 0;
+
+	ci_platform_configure(ci);
+
+	return ret;
+}
+
 static const struct ehci_driver_overrides ehci_ci_overrides = {
 	.extra_priv_size = sizeof(struct ehci_ci_priv),
 	.port_power	 = ehci_ci_portpower,
+	.reset		 = ehci_ci_reset,
 };
 
 static irqreturn_t host_irq(struct ci_hdrc *ci)
@@ -123,7 +141,6 @@ static int host_start(struct ci_hdrc *ci)
 
 	priv = (struct ehci_ci_priv *)ehci->priv;
 	priv->reg_vbus = NULL;
-	priv->ci = ci;
 
 	if (ci->platdata->reg_vbus && !ci_otg_is_fsm_mode(ci)) {
 		if (ci->platdata->flags & CI_HDRC_TURN_VBUS_EARLY_ON) {
@@ -153,12 +170,6 @@ static int host_start(struct ci_hdrc *ci)
 		}
 	}
 
-	if (ci->platdata->flags & CI_HDRC_DISABLE_STREAMING)
-		hw_write(ci, OP_USBMODE, USBMODE_CI_SDIS, USBMODE_CI_SDIS);
-
-	if (ci->platdata->flags & CI_HDRC_FORCE_FULLSPEED)
-		hw_write(ci, OP_PORTSC, PORTSC_PFSC, PORTSC_PFSC);
-
 	return ret;
 
 disable_reg:
@@ -177,11 +188,15 @@ static void host_stop(struct ci_hdrc *ci)
 
 	if (hcd) {
 		usb_remove_hcd(hcd);
+		ci->role = CI_ROLE_END;
+		synchronize_irq(ci->irq);
 		usb_put_hcd(hcd);
 		if (ci->platdata->reg_vbus && !ci_otg_is_fsm_mode(ci) &&
 			(ci->platdata->flags & CI_HDRC_TURN_VBUS_EARLY_ON))
 				regulator_disable(ci->platdata->reg_vbus);
 	}
+	ci->hcd = NULL;
+	ci->otg.host = NULL;
 }
 
 
@@ -249,9 +264,12 @@ int ci_hdrc_host_init(struct ci_hdrc *ci)
 	rdrv->name	= "host";
 	ci->roles[CI_ROLE_HOST] = rdrv;
 
+	return 0;
+}
+
+void ci_hdrc_host_driver_init(void)
+{
 	ehci_init_driver(&ci_ehci_hc_driver, &ehci_ci_overrides);
 	orig_bus_suspend = ci_ehci_hc_driver.bus_suspend;
 	ci_ehci_hc_driver.bus_suspend = ci_ehci_bus_suspend;
-
-	return 0;
 }

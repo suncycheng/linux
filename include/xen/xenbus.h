@@ -46,8 +46,8 @@
 #include <xen/interface/io/xenbus.h>
 #include <xen/interface/io/xs_wire.h>
 
-#define XENBUS_MAX_RING_PAGE_ORDER 4
-#define XENBUS_MAX_RING_PAGES      (1U << XENBUS_MAX_RING_PAGE_ORDER)
+#define XENBUS_MAX_RING_GRANT_ORDER 4
+#define XENBUS_MAX_RING_GRANTS      (1U << XENBUS_MAX_RING_GRANT_ORDER)
 #define INVALID_GRANT_HANDLE       (~0U)
 
 /* Register callback to watch this node. */
@@ -150,6 +150,10 @@ int xenbus_transaction_end(struct xenbus_transaction t, int abort);
 __scanf(4, 5)
 int xenbus_scanf(struct xenbus_transaction t,
 		 const char *dir, const char *node, const char *fmt, ...);
+
+/* Read an (optional) unsigned value. */
+unsigned int xenbus_read_unsigned(const char *dir, const char *node,
+				  unsigned int default_val);
 
 /* Single printf and write: returns -errno or 0. */
 __printf(4, 5)

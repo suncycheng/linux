@@ -34,7 +34,6 @@ typedef u64 __nocast cputime64_t;
  */
 #define cputime_to_jiffies(__ct)	\
 	cputime_div(__ct, NSEC_PER_SEC / HZ)
-#define cputime_to_scaled(__ct)		(__ct)
 #define jiffies_to_cputime(__jif)	\
 	(__force cputime_t)((__jif) * (NSEC_PER_SEC / HZ))
 #define cputime64_to_jiffies64(__ct)	\
@@ -50,6 +49,8 @@ typedef u64 __nocast cputime64_t;
 	(__force u64)(__ct)
 #define nsecs_to_cputime(__nsecs)	\
 	(__force cputime_t)(__nsecs)
+#define nsecs_to_cputime64(__nsecs)	\
+	(__force cputime64_t)(__nsecs)
 
 
 /*
@@ -75,7 +76,7 @@ typedef u64 __nocast cputime64_t;
  */
 static inline cputime_t timespec_to_cputime(const struct timespec *val)
 {
-	u64 ret = val->tv_sec * NSEC_PER_SEC + val->tv_nsec;
+	u64 ret = (u64)val->tv_sec * NSEC_PER_SEC + val->tv_nsec;
 	return (__force cputime_t) ret;
 }
 static inline void cputime_to_timespec(const cputime_t ct, struct timespec *val)
@@ -91,7 +92,8 @@ static inline void cputime_to_timespec(const cputime_t ct, struct timespec *val)
  */
 static inline cputime_t timeval_to_cputime(const struct timeval *val)
 {
-	u64 ret = val->tv_sec * NSEC_PER_SEC + val->tv_usec * NSEC_PER_USEC;
+	u64 ret = (u64)val->tv_sec * NSEC_PER_SEC +
+			val->tv_usec * NSEC_PER_USEC;
 	return (__force cputime_t) ret;
 }
 static inline void cputime_to_timeval(const cputime_t ct, struct timeval *val)

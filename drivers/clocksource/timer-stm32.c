@@ -40,24 +40,25 @@ struct stm32_clock_event_ddata {
 	void __iomem *base;
 };
 
-static void stm32_clock_event_set_mode(enum clock_event_mode mode,
-				       struct clock_event_device *evtdev)
+static int stm32_clock_event_shutdown(struct clock_event_device *evtdev)
 {
 	struct stm32_clock_event_ddata *data =
 		container_of(evtdev, struct stm32_clock_event_ddata, evtdev);
 	void *base = data->base;
 
-	switch (mode) {
-	case CLOCK_EVT_MODE_PERIODIC:
-		writel_relaxed(data->periodic_top, base + TIM_ARR);
-		writel_relaxed(TIM_CR1_ARPE | TIM_CR1_CEN, base + TIM_CR1);
-		break;
+	writel_relaxed(0, base + TIM_CR1);
+	return 0;
+}
 
-	case CLOCK_EVT_MODE_ONESHOT:
-	default:
-		writel_relaxed(0, base + TIM_CR1);
-		break;
-	}
+static int stm32_clock_event_set_periodic(struct clock_event_device *evtdev)
+{
+	struct stm32_clock_event_ddata *data =
+		container_of(evtdev, struct stm32_clock_event_ddata, evtdev);
+	void *base = data->base;
+
+	writel_relaxed(data->periodic_top, base + TIM_ARR);
+	writel_relaxed(TIM_CR1_ARPE | TIM_CR1_CEN, base + TIM_CR1);
+	return 0;
 }
 
 static int stm32_clock_event_set_next_event(unsigned long evt,
@@ -88,13 +89,16 @@ static struct stm32_clock_event_ddata clock_event_ddata = {
 	.evtdev = {
 		.name = "stm32 clockevent",
 		.features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_PERIODIC,
-		.set_mode = stm32_clock_event_set_mode,
+		.set_state_shutdown = stm32_clock_event_shutdown,
+		.set_state_periodic = stm32_clock_event_set_periodic,
+		.set_state_oneshot = stm32_clock_event_shutdown,
+		.tick_resume = stm32_clock_event_shutdown,
 		.set_next_event = stm32_clock_event_set_next_event,
 		.rating = 200,
 	},
 };
 
-static void __init stm32_clockevent_init(struct device_node *np)
+static int __init stm32_clockevent_init(struct device_node *np)
 {
 	struct stm32_clock_event_ddata *data = &clock_event_ddata;
 	struct clk *clk;
@@ -126,12 +130,14 @@ static void __init stm32_clockevent_init(struct device_node *np)
 
 	data->base = of_iomap(np, 0);
 	if (!data->base) {
+		ret = -ENXIO;
 		pr_err("failed to map registers for clockevent\n");
 		goto err_iomap;
 	}
 
 	irq = irq_of_parse_and_map(np, 0);
 	if (!irq) {
+		ret = -EINVAL;
 		pr_err("%s: failed to get irq.\n", np->full_name);
 		goto err_get_irq;
 	}
@@ -169,7 +175,7 @@ static void __init stm32_clockevent_init(struct device_node *np)
 	pr_info("%s: STM32 clockevent driver initialized (%d bits)\n",
 			np->full_name, bits);
 
-	return;
+	return ret;
 
 err_get_irq:
 	iounmap(data->base);
@@ -178,7 +184,7 @@ err_iomap:
 err_clk_enable:
 	clk_put(clk);
 err_clk_get:
-	return;
+	return ret;
 }
 
 CLOCKSOURCE_OF_DECLARE(stm32, "st,stm32-timer", stm32_clockevent_init);

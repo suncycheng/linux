@@ -317,8 +317,10 @@ static const struct snd_soc_codec_driver sta529_codec_driver = {
 	.set_bias_level = sta529_set_bias_level,
 	.suspend_bias_off = true,
 
-	.controls = sta529_snd_controls,
-	.num_controls = ARRAY_SIZE(sta529_snd_controls),
+	.component_driver = {
+		.controls		= sta529_snd_controls,
+		.num_controls		= ARRAY_SIZE(sta529_snd_controls),
+	},
 };
 
 static const struct regmap_config sta529_regmap = {
@@ -338,9 +340,6 @@ static int sta529_i2c_probe(struct i2c_client *i2c,
 {
 	struct sta529 *sta529;
 	int ret;
-
-	if (!i2c_check_functionality(i2c->adapter, I2C_FUNC_SMBUS_BYTE_DATA))
-		return -EINVAL;
 
 	sta529 = devm_kzalloc(&i2c->dev, sizeof(struct sta529), GFP_KERNEL);
 	if (!sta529)
@@ -379,7 +378,6 @@ MODULE_DEVICE_TABLE(i2c, sta529_i2c_id);
 static struct i2c_driver sta529_i2c_driver = {
 	.driver = {
 		.name = "sta529",
-		.owner = THIS_MODULE,
 	},
 	.probe		= sta529_i2c_probe,
 	.remove		= sta529_i2c_remove,

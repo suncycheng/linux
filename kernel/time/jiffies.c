@@ -59,16 +59,16 @@
 #define JIFFIES_SHIFT	8
 #endif
 
-static cycle_t jiffies_read(struct clocksource *cs)
+static u64 jiffies_read(struct clocksource *cs)
 {
-	return (cycle_t) jiffies;
+	return (u64) jiffies;
 }
 
 static struct clocksource clocksource_jiffies = {
 	.name		= "jiffies",
 	.rating		= 1, /* lowest valid rating*/
 	.read		= jiffies_read,
-	.mask		= 0xffffffff, /*32bits*/
+	.mask		= CLOCKSOURCE_MASK(32),
 	.mult		= NSEC_PER_JIFFY << JIFFIES_SHIFT, /* details above */
 	.shift		= JIFFIES_SHIFT,
 	.max_cycles	= 10,

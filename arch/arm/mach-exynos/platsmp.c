@@ -15,11 +15,11 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/delay.h>
-#include <linux/device.h>
 #include <linux/jiffies.h>
 #include <linux/smp.h>
 #include <linux/io.h>
 #include <linux/of_address.h>
+#include <linux/soc/samsung/exynos-regs-pmu.h>
 
 #include <asm/cacheflush.h>
 #include <asm/cp15.h>
@@ -30,7 +30,6 @@
 #include <mach/map.h>
 
 #include "common.h"
-#include "regs-pmu.h"
 
 extern void exynos4_secondary_startup(void);
 
@@ -182,7 +181,7 @@ static inline void __iomem *cpu_boot_reg(int cpu)
 
 	boot_reg = cpu_boot_reg_base();
 	if (!boot_reg)
-		return ERR_PTR(-ENODEV);
+		return IOMEM_ERR_PTR(-ENODEV);
 	if (soc_is_exynos4412())
 		boot_reg += 4*cpu;
 	else if (soc_is_exynos5420() || soc_is_exynos5800())
@@ -265,7 +264,7 @@ int exynos_set_boot_addr(u32 core_id, unsigned long boot_addr)
 			ret = PTR_ERR(boot_reg);
 			goto fail;
 		}
-		__raw_writel(boot_addr, boot_reg);
+		writel_relaxed(boot_addr, boot_reg);
 		ret = 0;
 	}
 fail:
@@ -290,7 +289,7 @@ int exynos_get_boot_addr(u32 core_id, unsigned long *boot_addr)
 			ret = PTR_ERR(boot_reg);
 			goto fail;
 		}
-		*boot_addr = __raw_readl(boot_reg);
+		*boot_addr = readl_relaxed(boot_reg);
 		ret = 0;
 	}
 fail:
@@ -386,36 +385,6 @@ fail:
 	return pen_release != -1 ? ret : 0;
 }
 
-/*
- * Initialise the CPU possible map early - this describes the CPUs
- * which may be present or become present in the system.
- */
-
-static void __init exynos_smp_init_cpus(void)
-{
-	void __iomem *scu_base = scu_base_addr();
-	unsigned int i, ncores;
-
-	if (read_cpuid_part() == ARM_CPU_PART_CORTEX_A9)
-		ncores = scu_base ? scu_get_core_count(scu_base) : 1;
-	else
-		/*
-		 * CPU Nodes are passed thru DT and set_cpu_possible
-		 * is set by "arm_dt_init_cpu_maps".
-		 */
-		return;
-
-	/* sanity check */
-	if (ncores > nr_cpu_ids) {
-		pr_warn("SMP: %u cores greater than maximum (%u), clipping\n",
-			ncores, nr_cpu_ids);
-		ncores = nr_cpu_ids;
-	}
-
-	for (i = 0; i < ncores; i++)
-		set_cpu_possible(i, true);
-}
-
 static void __init exynos_smp_prepare_cpus(unsigned int max_cpus)
 {
 	int i;
@@ -479,8 +448,7 @@ static void exynos_cpu_die(unsigned int cpu)
 }
 #endif /* CONFIG_HOTPLUG_CPU */
 
-struct smp_operations exynos_smp_ops __initdata = {
-	.smp_init_cpus		= exynos_smp_init_cpus,
+const struct smp_operations exynos_smp_ops __initconst = {
 	.smp_prepare_cpus	= exynos_smp_prepare_cpus,
 	.smp_secondary_init	= exynos_secondary_init,
 	.smp_boot_secondary	= exynos_boot_secondary,

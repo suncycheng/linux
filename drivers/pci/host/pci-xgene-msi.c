@@ -40,8 +40,8 @@ struct xgene_msi_group {
 
 struct xgene_msi {
 	struct device_node	*node;
-	struct msi_controller	mchip;
-	struct irq_domain	*domain;
+	struct irq_domain	*inner_domain;
+	struct irq_domain	*msi_domain;
 	u64			msi_addr;
 	void __iomem		*msi_regs;
 	unsigned long		*bitmap;
@@ -223,7 +223,6 @@ static int xgene_irq_domain_alloc(struct irq_domain *domain, unsigned int virq,
 	irq_domain_set_info(domain, virq, msi_irq,
 			    &xgene_msi_bottom_irq_chip, domain->host_data,
 			    handle_simple_irq, NULL, NULL);
-	set_irq_flags(virq, IRQF_VALID);
 
 	return 0;
 }
@@ -252,17 +251,17 @@ static const struct irq_domain_ops msi_domain_ops = {
 
 static int xgene_allocate_domains(struct xgene_msi *msi)
 {
-	msi->domain = irq_domain_add_linear(NULL, NR_MSI_VEC,
-					    &msi_domain_ops, msi);
-	if (!msi->domain)
+	msi->inner_domain = irq_domain_add_linear(NULL, NR_MSI_VEC,
+						  &msi_domain_ops, msi);
+	if (!msi->inner_domain)
 		return -ENOMEM;
 
-	msi->mchip.domain = pci_msi_create_irq_domain(msi->mchip.of_node,
-						      &xgene_msi_domain_info,
-						      msi->domain);
+	msi->msi_domain = pci_msi_create_irq_domain(of_node_to_fwnode(msi->node),
+						    &xgene_msi_domain_info,
+						    msi->inner_domain);
 
-	if (!msi->mchip.domain) {
-		irq_domain_remove(msi->domain);
+	if (!msi->msi_domain) {
+		irq_domain_remove(msi->inner_domain);
 		return -ENOMEM;
 	}
 
@@ -271,10 +270,10 @@ static int xgene_allocate_domains(struct xgene_msi *msi)
 
 static void xgene_free_domains(struct xgene_msi *msi)
 {
-	if (msi->mchip.domain)
-		irq_domain_remove(msi->mchip.domain);
-	if (msi->domain)
-		irq_domain_remove(msi->domain);
+	if (msi->msi_domain)
+		irq_domain_remove(msi->msi_domain);
+	if (msi->inner_domain)
+		irq_domain_remove(msi->inner_domain);
 }
 
 static int xgene_msi_init_allocator(struct xgene_msi *xgene_msi)
@@ -296,7 +295,7 @@ static int xgene_msi_init_allocator(struct xgene_msi *xgene_msi)
 	return 0;
 }
 
-static void xgene_msi_isr(unsigned int irq, struct irq_desc *desc)
+static void xgene_msi_isr(struct irq_desc *desc)
 {
 	struct irq_chip *chip = irq_desc_get_chip(desc);
 	struct xgene_msi_group *msi_groups;
@@ -340,7 +339,7 @@ static void xgene_msi_isr(unsigned int irq, struct irq_desc *desc)
 			 * CPU0
 			 */
 			hw_irq = hwirq_to_canonical_hwirq(hw_irq);
-			virq = irq_find_mapping(xgene_msi->domain, hw_irq);
+			virq = irq_find_mapping(xgene_msi->inner_domain, hw_irq);
 			WARN_ON(!virq);
 			if (virq != 0)
 				generic_handle_irq(virq);
@@ -361,18 +360,16 @@ static void xgene_msi_isr(unsigned int irq, struct irq_desc *desc)
 	chained_irq_exit(chip, desc);
 }
 
+static enum cpuhp_state pci_xgene_online;
+
 static int xgene_msi_remove(struct platform_device *pdev)
 {
-	int virq, i;
 	struct xgene_msi *msi = platform_get_drvdata(pdev);
 
-	for (i = 0; i < NR_HW_IRQS; i++) {
-		virq = msi->msi_groups[i].gic_irq;
-		if (virq != 0) {
-			irq_set_chained_handler(virq, NULL);
-			irq_set_handler_data(virq, NULL);
-		}
-	}
+	if (pci_xgene_online)
+		cpuhp_remove_state(pci_xgene_online);
+	cpuhp_remove_state(CPUHP_PCI_XGENE_DEAD);
+
 	kfree(msi->msi_groups);
 
 	kfree(msi->bitmap);
@@ -421,8 +418,8 @@ static int xgene_msi_hwirq_alloc(unsigned int cpu)
 		}
 
 		if (err) {
-			irq_set_chained_handler(msi_group->gic_irq, NULL);
-			irq_set_handler_data(msi_group->gic_irq, NULL);
+			irq_set_chained_handler_and_data(msi_group->gic_irq,
+							 NULL, NULL);
 			return err;
 		}
 	}
@@ -430,7 +427,7 @@ static int xgene_msi_hwirq_alloc(unsigned int cpu)
 	return 0;
 }
 
-static void xgene_msi_hwirq_free(unsigned int cpu)
+static int xgene_msi_hwirq_free(unsigned int cpu)
 {
 	struct xgene_msi *msi = &xgene_msi_ctrl;
 	struct xgene_msi_group *msi_group;
@@ -441,35 +438,11 @@ static void xgene_msi_hwirq_free(unsigned int cpu)
 		if (!msi_group->gic_irq)
 			continue;
 
-		irq_set_chained_handler(msi_group->gic_irq, NULL);
-		irq_set_handler_data(msi_group->gic_irq, NULL);
+		irq_set_chained_handler_and_data(msi_group->gic_irq, NULL,
+						 NULL);
 	}
+	return 0;
 }
-
-static int xgene_msi_cpu_callback(struct notifier_block *nfb,
-				  unsigned long action, void *hcpu)
-{
-	unsigned cpu = (unsigned long)hcpu;
-
-	switch (action) {
-	case CPU_ONLINE:
-	case CPU_ONLINE_FROZEN:
-		xgene_msi_hwirq_alloc(cpu);
-		break;
-	case CPU_DEAD:
-	case CPU_DEAD_FROZEN:
-		xgene_msi_hwirq_free(cpu);
-		break;
-	default:
-		break;
-	}
-
-	return NOTIFY_OK;
-}
-
-static struct notifier_block xgene_msi_cpu_notifier = {
-	.notifier_call = xgene_msi_cpu_callback,
-};
 
 static const struct of_device_id xgene_msi_match_table[] = {
 	{.compatible = "apm,xgene1-msi"},
@@ -481,7 +454,6 @@ static int xgene_msi_probe(struct platform_device *pdev)
 	struct resource *res;
 	int rc, irq_index;
 	struct xgene_msi *xgene_msi;
-	unsigned int cpu;
 	int virt_msir;
 	u32 msi_val, msi_idx;
 
@@ -497,7 +469,7 @@ static int xgene_msi_probe(struct platform_device *pdev)
 		goto error;
 	}
 	xgene_msi->msi_addr = res->start;
-
+	xgene_msi->node = pdev->dev.of_node;
 	xgene_msi->num_cpus = num_possible_cpus();
 
 	rc = xgene_msi_init_allocator(xgene_msi);
@@ -543,37 +515,22 @@ static int xgene_msi_probe(struct platform_device *pdev)
 		}
 	}
 
-	cpu_notifier_register_begin();
-
-	for_each_online_cpu(cpu)
-		if (xgene_msi_hwirq_alloc(cpu)) {
-			dev_err(&pdev->dev, "failed to register MSI handlers\n");
-			cpu_notifier_register_done();
-			goto error;
-		}
-
-	rc = __register_hotcpu_notifier(&xgene_msi_cpu_notifier);
-	if (rc) {
-		dev_err(&pdev->dev, "failed to add CPU MSI notifier\n");
-		cpu_notifier_register_done();
-		goto error;
-	}
-
-	cpu_notifier_register_done();
-
-	xgene_msi->mchip.of_node = pdev->dev.of_node;
-	rc = of_pci_msi_chip_add(&xgene_msi->mchip);
-	if (rc) {
-		dev_err(&pdev->dev, "failed to add MSI controller chip\n");
-		goto error_notifier;
-	}
+	rc = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "pci/xgene:online",
+			       xgene_msi_hwirq_alloc, NULL);
+	if (rc)
+		goto err_cpuhp;
+	pci_xgene_online = rc;
+	rc = cpuhp_setup_state(CPUHP_PCI_XGENE_DEAD, "pci/xgene:dead", NULL,
+			       xgene_msi_hwirq_free);
+	if (rc)
+		goto err_cpuhp;
 
 	dev_info(&pdev->dev, "APM X-Gene PCIe MSI driver loaded\n");
 
 	return 0;
 
-error_notifier:
-	unregister_hotcpu_notifier(&xgene_msi_cpu_notifier);
+err_cpuhp:
+	dev_err(&pdev->dev, "failed to add CPU MSI notifier\n");
 error:
 	xgene_msi_remove(pdev);
 	return rc;
@@ -582,7 +539,6 @@ error:
 static struct platform_driver xgene_msi_driver = {
 	.driver = {
 		.name = "xgene-msi",
-		.owner = THIS_MODULE,
 		.of_match_table = xgene_msi_match_table,
 	},
 	.probe = xgene_msi_probe,

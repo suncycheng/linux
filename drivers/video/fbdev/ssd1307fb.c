@@ -6,16 +6,16 @@
  * Licensed under the GPLv2 or later.
  */
 
-#include <linux/module.h>
 #include <linux/backlight.h>
-#include <linux/kernel.h>
-#include <linux/i2c.h>
+#include <linux/delay.h>
 #include <linux/fb.h>
-#include <linux/uaccess.h>
+#include <linux/i2c.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/pwm.h>
-#include <linux/delay.h>
+#include <linux/uaccess.h>
 
 #define SSD1307FB_DATA			0x40
 #define SSD1307FB_COMMAND		0x80
@@ -64,7 +64,7 @@ struct ssd1307fb_par {
 	u32 contrast;
 	u32 dclk_div;
 	u32 dclk_frq;
-	struct ssd1307fb_deviceinfo *device_info;
+	const struct ssd1307fb_deviceinfo *device_info;
 	struct i2c_client *client;
 	u32 height;
 	struct fb_info *info;
@@ -84,7 +84,7 @@ struct ssd1307fb_array {
 	u8	data[0];
 };
 
-static struct fb_fix_screeninfo ssd1307fb_fix = {
+static const struct fb_fix_screeninfo ssd1307fb_fix = {
 	.id		= "Solomon SSD1307",
 	.type		= FB_TYPE_PACKED_PIXELS,
 	.visual		= FB_VISUAL_MONO10,
@@ -94,7 +94,7 @@ static struct fb_fix_screeninfo ssd1307fb_fix = {
 	.accel		= FB_ACCEL_NONE,
 };
 
-static struct fb_var_screeninfo ssd1307fb_var = {
+static const struct fb_var_screeninfo ssd1307fb_var = {
 	.bits_per_pixel	= 1,
 };
 
@@ -286,6 +286,7 @@ static int ssd1307fb_init(struct ssd1307fb_par *par)
 {
 	int ret;
 	u32 precharge, dclk, com_invdir, compins;
+	struct pwm_args pargs;
 
 	if (par->device_info->need_pwm) {
 		par->pwm = pwm_get(&par->client->dev, NULL);
@@ -294,7 +295,15 @@ static int ssd1307fb_init(struct ssd1307fb_par *par)
 			return PTR_ERR(par->pwm);
 		}
 
-		par->pwm_period = pwm_get_period(par->pwm);
+		/*
+		 * FIXME: pwm_apply_args() should be removed when switching to
+		 * the atomic PWM API.
+		 */
+		pwm_apply_args(par->pwm);
+
+		pwm_get_args(par->pwm, &pargs);
+
+		par->pwm_period = pargs.period;
 		/* Enable the PWM */
 		pwm_config(par->pwm, par->pwm_period / 2, par->pwm_period);
 		pwm_enable(par->pwm);
@@ -389,7 +398,7 @@ static int ssd1307fb_init(struct ssd1307fb_par *par)
 		return ret;
 
 	ret = ssd1307fb_write_cmd(par->client,
-		(par->device_info->need_chargepump & 0x1 << 2) & 0x14);
+		BIT(4) | (par->device_info->need_chargepump ? BIT(2) : 0));
 	if (ret < 0)
 		return ret;
 
@@ -495,6 +504,12 @@ static struct ssd1307fb_deviceinfo ssd1307fb_ssd1307_deviceinfo = {
 	.need_pwm = 1,
 };
 
+static struct ssd1307fb_deviceinfo ssd1307fb_ssd1309_deviceinfo = {
+	.default_vcomh = 0x34,
+	.default_dclk_div = 1,
+	.default_dclk_frq = 10,
+};
+
 static const struct of_device_id ssd1307fb_of_match[] = {
 	{
 		.compatible = "solomon,ssd1305fb-i2c",
@@ -507,6 +522,10 @@ static const struct of_device_id ssd1307fb_of_match[] = {
 	{
 		.compatible = "solomon,ssd1307fb-i2c",
 		.data = (void *)&ssd1307fb_ssd1307_deviceinfo,
+	},
+	{
+		.compatible = "solomon,ssd1309fb-i2c",
+		.data = (void *)&ssd1307fb_ssd1309_deviceinfo,
 	},
 	{},
 };
@@ -540,8 +559,7 @@ static int ssd1307fb_probe(struct i2c_client *client,
 	par->info = info;
 	par->client = client;
 
-	par->device_info = (struct ssd1307fb_deviceinfo *)of_match_device(
-			ssd1307fb_of_match, &client->dev)->data;
+	par->device_info = of_device_get_match_data(&client->dev);
 
 	par->reset = of_get_named_gpio(client->dev.of_node,
 					 "reset-gpios", 0);
@@ -656,8 +674,9 @@ static int ssd1307fb_probe(struct i2c_client *client,
 	bl = backlight_device_register(bl_name, &client->dev, par,
 				       &ssd1307fb_bl_ops, NULL);
 	if (IS_ERR(bl)) {
-		dev_err(&client->dev, "unable to register backlight device: %ld\n",
-			PTR_ERR(bl));
+		ret = PTR_ERR(bl);
+		dev_err(&client->dev, "unable to register backlight device: %d\n",
+			ret);
 		goto bl_init_error;
 	}
 
@@ -708,6 +727,7 @@ static const struct i2c_device_id ssd1307fb_i2c_id[] = {
 	{ "ssd1305fb", 0 },
 	{ "ssd1306fb", 0 },
 	{ "ssd1307fb", 0 },
+	{ "ssd1309fb", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ssd1307fb_i2c_id);
@@ -719,7 +739,6 @@ static struct i2c_driver ssd1307fb_driver = {
 	.driver = {
 		.name = "ssd1307fb",
 		.of_match_table = ssd1307fb_of_match,
-		.owner = THIS_MODULE,
 	},
 };
 

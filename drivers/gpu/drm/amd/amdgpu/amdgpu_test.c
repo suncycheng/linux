@@ -59,8 +59,9 @@ static void amdgpu_do_test_moves(struct amdgpu_device *adev)
 		goto out_cleanup;
 	}
 
-	r = amdgpu_bo_create(adev, size, PAGE_SIZE, true, AMDGPU_GEM_DOMAIN_VRAM, 0,
-			     NULL, &vram_obj);
+	r = amdgpu_bo_create(adev, size, PAGE_SIZE, true,
+			     AMDGPU_GEM_DOMAIN_VRAM, 0,
+			     NULL, NULL, &vram_obj);
 	if (r) {
 		DRM_ERROR("Failed to create VRAM object\n");
 		goto out_cleanup;
@@ -77,10 +78,11 @@ static void amdgpu_do_test_moves(struct amdgpu_device *adev)
 		void *gtt_map, *vram_map;
 		void **gtt_start, **gtt_end;
 		void **vram_start, **vram_end;
-		struct amdgpu_fence *fence = NULL;
+		struct dma_fence *fence = NULL;
 
 		r = amdgpu_bo_create(adev, size, PAGE_SIZE, true,
-				     AMDGPU_GEM_DOMAIN_GTT, 0, NULL, gtt_obj + i);
+				     AMDGPU_GEM_DOMAIN_GTT, 0, NULL,
+				     NULL, gtt_obj + i);
 		if (r) {
 			DRM_ERROR("Failed to create GTT object %d\n", i);
 			goto out_lclean;
@@ -109,20 +111,20 @@ static void amdgpu_do_test_moves(struct amdgpu_device *adev)
 		amdgpu_bo_kunmap(gtt_obj[i]);
 
 		r = amdgpu_copy_buffer(ring, gtt_addr, vram_addr,
-				       size, NULL, &fence);
+				       size, NULL, &fence, false);
 
 		if (r) {
 			DRM_ERROR("Failed GTT->VRAM copy %d\n", i);
 			goto out_lclean_unpin;
 		}
 
-		r = amdgpu_fence_wait(fence, false);
+		r = dma_fence_wait(fence, false);
 		if (r) {
 			DRM_ERROR("Failed to wait for GTT->VRAM fence %d\n", i);
 			goto out_lclean_unpin;
 		}
 
-		amdgpu_fence_unref(&fence);
+		dma_fence_put(fence);
 
 		r = amdgpu_bo_kmap(vram_obj, &vram_map);
 		if (r) {
@@ -154,20 +156,20 @@ static void amdgpu_do_test_moves(struct amdgpu_device *adev)
 		amdgpu_bo_kunmap(vram_obj);
 
 		r = amdgpu_copy_buffer(ring, vram_addr, gtt_addr,
-				       size, NULL, &fence);
+				       size, NULL, &fence, false);
 
 		if (r) {
 			DRM_ERROR("Failed VRAM->GTT copy %d\n", i);
 			goto out_lclean_unpin;
 		}
 
-		r = amdgpu_fence_wait(fence, false);
+		r = dma_fence_wait(fence, false);
 		if (r) {
 			DRM_ERROR("Failed to wait for VRAM->GTT fence %d\n", i);
 			goto out_lclean_unpin;
 		}
 
-		amdgpu_fence_unref(&fence);
+		dma_fence_put(fence);
 
 		r = amdgpu_bo_kmap(gtt_obj[i], &gtt_map);
 		if (r) {
@@ -214,7 +216,7 @@ out_lclean:
 			amdgpu_bo_unref(&gtt_obj[i]);
 		}
 		if (fence)
-			amdgpu_fence_unref(&fence);
+			dma_fence_put(fence);
 		break;
 	}
 
@@ -236,143 +238,10 @@ void amdgpu_test_moves(struct amdgpu_device *adev)
 		amdgpu_do_test_moves(adev);
 }
 
-static int amdgpu_test_create_and_emit_fence(struct amdgpu_device *adev,
-					     struct amdgpu_ring *ring,
-					     struct amdgpu_fence **fence)
-{
-	uint32_t handle = ring->idx ^ 0xdeafbeef;
-	int r;
-
-	if (ring == &adev->uvd.ring) {
-		r = amdgpu_uvd_get_create_msg(ring, handle, NULL);
-		if (r) {
-			DRM_ERROR("Failed to get dummy create msg\n");
-			return r;
-		}
-
-		r = amdgpu_uvd_get_destroy_msg(ring, handle, fence);
-		if (r) {
-			DRM_ERROR("Failed to get dummy destroy msg\n");
-			return r;
-		}
-
-	} else if (ring == &adev->vce.ring[0] ||
-		   ring == &adev->vce.ring[1]) {
-		r = amdgpu_vce_get_create_msg(ring, handle, NULL);
-		if (r) {
-			DRM_ERROR("Failed to get dummy create msg\n");
-			return r;
-		}
-
-		r = amdgpu_vce_get_destroy_msg(ring, handle, fence);
-		if (r) {
-			DRM_ERROR("Failed to get dummy destroy msg\n");
-			return r;
-		}
-
-	} else {
-		r = amdgpu_ring_lock(ring, 64);
-		if (r) {
-			DRM_ERROR("Failed to lock ring A %d\n", ring->idx);
-			return r;
-		}
-		amdgpu_fence_emit(ring, AMDGPU_FENCE_OWNER_UNDEFINED, fence);
-		amdgpu_ring_unlock_commit(ring);
-	}
-	return 0;
-}
-
 void amdgpu_test_ring_sync(struct amdgpu_device *adev,
 			   struct amdgpu_ring *ringA,
 			   struct amdgpu_ring *ringB)
 {
-	struct amdgpu_fence *fence1 = NULL, *fence2 = NULL;
-	struct amdgpu_semaphore *semaphore = NULL;
-	int r;
-
-	r = amdgpu_semaphore_create(adev, &semaphore);
-	if (r) {
-		DRM_ERROR("Failed to create semaphore\n");
-		goto out_cleanup;
-	}
-
-	r = amdgpu_ring_lock(ringA, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring A %d\n", ringA->idx);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_wait(ringA, semaphore);
-	amdgpu_ring_unlock_commit(ringA);
-
-	r = amdgpu_test_create_and_emit_fence(adev, ringA, &fence1);
-	if (r)
-		goto out_cleanup;
-
-	r = amdgpu_ring_lock(ringA, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring A %d\n", ringA->idx);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_wait(ringA, semaphore);
-	amdgpu_ring_unlock_commit(ringA);
-
-	r = amdgpu_test_create_and_emit_fence(adev, ringA, &fence2);
-	if (r)
-		goto out_cleanup;
-
-	mdelay(1000);
-
-	if (amdgpu_fence_signaled(fence1)) {
-		DRM_ERROR("Fence 1 signaled without waiting for semaphore.\n");
-		goto out_cleanup;
-	}
-
-	r = amdgpu_ring_lock(ringB, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring B %p\n", ringB);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_signal(ringB, semaphore);
-	amdgpu_ring_unlock_commit(ringB);
-
-	r = amdgpu_fence_wait(fence1, false);
-	if (r) {
-		DRM_ERROR("Failed to wait for sync fence 1\n");
-		goto out_cleanup;
-	}
-
-	mdelay(1000);
-
-	if (amdgpu_fence_signaled(fence2)) {
-		DRM_ERROR("Fence 2 signaled without waiting for semaphore.\n");
-		goto out_cleanup;
-	}
-
-	r = amdgpu_ring_lock(ringB, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring B %p\n", ringB);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_signal(ringB, semaphore);
-	amdgpu_ring_unlock_commit(ringB);
-
-	r = amdgpu_fence_wait(fence2, false);
-	if (r) {
-		DRM_ERROR("Failed to wait for sync fence 1\n");
-		goto out_cleanup;
-	}
-
-out_cleanup:
-	amdgpu_semaphore_free(adev, &semaphore, NULL);
-
-	if (fence1)
-		amdgpu_fence_unref(&fence1);
-
-	if (fence2)
-		amdgpu_fence_unref(&fence2);
-
-	if (r)
-		printk(KERN_WARNING "Error while testing ring sync (%d).\n", r);
 }
 
 static void amdgpu_test_ring_sync2(struct amdgpu_device *adev,
@@ -380,109 +249,6 @@ static void amdgpu_test_ring_sync2(struct amdgpu_device *adev,
 			    struct amdgpu_ring *ringB,
 			    struct amdgpu_ring *ringC)
 {
-	struct amdgpu_fence *fenceA = NULL, *fenceB = NULL;
-	struct amdgpu_semaphore *semaphore = NULL;
-	bool sigA, sigB;
-	int i, r;
-
-	r = amdgpu_semaphore_create(adev, &semaphore);
-	if (r) {
-		DRM_ERROR("Failed to create semaphore\n");
-		goto out_cleanup;
-	}
-
-	r = amdgpu_ring_lock(ringA, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring A %d\n", ringA->idx);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_wait(ringA, semaphore);
-	amdgpu_ring_unlock_commit(ringA);
-
-	r = amdgpu_test_create_and_emit_fence(adev, ringA, &fenceA);
-	if (r)
-		goto out_cleanup;
-
-	r = amdgpu_ring_lock(ringB, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring B %d\n", ringB->idx);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_wait(ringB, semaphore);
-	amdgpu_ring_unlock_commit(ringB);
-	r = amdgpu_test_create_and_emit_fence(adev, ringB, &fenceB);
-	if (r)
-		goto out_cleanup;
-
-	mdelay(1000);
-
-	if (amdgpu_fence_signaled(fenceA)) {
-		DRM_ERROR("Fence A signaled without waiting for semaphore.\n");
-		goto out_cleanup;
-	}
-	if (amdgpu_fence_signaled(fenceB)) {
-		DRM_ERROR("Fence B signaled without waiting for semaphore.\n");
-		goto out_cleanup;
-	}
-
-	r = amdgpu_ring_lock(ringC, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring B %p\n", ringC);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_signal(ringC, semaphore);
-	amdgpu_ring_unlock_commit(ringC);
-
-	for (i = 0; i < 30; ++i) {
-		mdelay(100);
-		sigA = amdgpu_fence_signaled(fenceA);
-		sigB = amdgpu_fence_signaled(fenceB);
-		if (sigA || sigB)
-			break;
-	}
-
-	if (!sigA && !sigB) {
-		DRM_ERROR("Neither fence A nor B has been signaled\n");
-		goto out_cleanup;
-	} else if (sigA && sigB) {
-		DRM_ERROR("Both fence A and B has been signaled\n");
-		goto out_cleanup;
-	}
-
-	DRM_INFO("Fence %c was first signaled\n", sigA ? 'A' : 'B');
-
-	r = amdgpu_ring_lock(ringC, 64);
-	if (r) {
-		DRM_ERROR("Failed to lock ring B %p\n", ringC);
-		goto out_cleanup;
-	}
-	amdgpu_semaphore_emit_signal(ringC, semaphore);
-	amdgpu_ring_unlock_commit(ringC);
-
-	mdelay(1000);
-
-	r = amdgpu_fence_wait(fenceA, false);
-	if (r) {
-		DRM_ERROR("Failed to wait for sync fence A\n");
-		goto out_cleanup;
-	}
-	r = amdgpu_fence_wait(fenceB, false);
-	if (r) {
-		DRM_ERROR("Failed to wait for sync fence B\n");
-		goto out_cleanup;
-	}
-
-out_cleanup:
-	amdgpu_semaphore_free(adev, &semaphore, NULL);
-
-	if (fenceA)
-		amdgpu_fence_unref(&fenceA);
-
-	if (fenceB)
-		amdgpu_fence_unref(&fenceB);
-
-	if (r)
-		printk(KERN_WARNING "Error while testing ring sync (%d).\n", r);
 }
 
 static bool amdgpu_test_sync_possible(struct amdgpu_ring *ringA,

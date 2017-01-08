@@ -394,11 +394,10 @@ static DECLARE_TLV_DB_SCALE(dac_pcm_tlv, -7163, 36, 1);
 static DECLARE_TLV_DB_SCALE(adc_pcm_tlv, -12700, 50, 1);
 static DECLARE_TLV_DB_SCALE(out_mix_tlv, -1500, 300, 1);
 
-static const unsigned int capture_sd_tlv[] = {
-	TLV_DB_RANGE_HEAD(2),
+static const DECLARE_TLV_DB_RANGE(capture_sd_tlv,
 	0, 12, TLV_DB_SCALE_ITEM(-3600, 300, 1),
-	13, 15, TLV_DB_SCALE_ITEM(0, 0, 0),
-};
+	13, 15, TLV_DB_SCALE_ITEM(0, 0, 0)
+);
 
 static const struct snd_kcontrol_new wm8350_snd_controls[] = {
 	SOC_ENUM("Playback Deemphasis", wm8350_enum[0]),
@@ -1588,19 +1587,21 @@ static struct regmap *wm8350_get_regmap(struct device *dev)
 	return wm8350->regmap;
 }
 
-static struct snd_soc_codec_driver soc_codec_dev_wm8350 = {
+static const struct snd_soc_codec_driver soc_codec_dev_wm8350 = {
 	.probe =	wm8350_codec_probe,
 	.remove =	wm8350_codec_remove,
 	.get_regmap =	wm8350_get_regmap,
 	.set_bias_level = wm8350_set_bias_level,
 	.suspend_bias_off = true,
 
-	.controls = wm8350_snd_controls,
-	.num_controls = ARRAY_SIZE(wm8350_snd_controls),
-	.dapm_widgets = wm8350_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(wm8350_dapm_widgets),
-	.dapm_routes = wm8350_dapm_routes,
-	.num_dapm_routes = ARRAY_SIZE(wm8350_dapm_routes),
+	.component_driver = {
+		.controls		= wm8350_snd_controls,
+		.num_controls		= ARRAY_SIZE(wm8350_snd_controls),
+		.dapm_widgets		= wm8350_dapm_widgets,
+		.num_dapm_widgets	= ARRAY_SIZE(wm8350_dapm_widgets),
+		.dapm_routes		= wm8350_dapm_routes,
+		.num_dapm_routes	= ARRAY_SIZE(wm8350_dapm_routes),
+	},
 };
 
 static int wm8350_probe(struct platform_device *pdev)

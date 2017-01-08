@@ -218,7 +218,7 @@ static int config_ep(struct fusb300_ep *ep,
 	   (info.type == USB_ENDPOINT_XFER_ISOC)) {
 		info.interval = desc->bInterval;
 		if (info.type == USB_ENDPOINT_XFER_ISOC)
-			info.bw_num = ((desc->wMaxPacketSize & 0x1800) >> 11);
+			info.bw_num = usb_endpoint_maxp_mult(desc);
 	}
 
 	ep_fifo_setting(fusb300, info);
@@ -1450,6 +1450,17 @@ static int fusb300_probe(struct platform_device *pdev)
 		ep->ep.name = fusb300_ep_name[i];
 		ep->ep.ops = &fusb300_ep_ops;
 		usb_ep_set_maxpacket_limit(&ep->ep, HS_BULK_MAX_PACKET_SIZE);
+
+		if (i == 0) {
+			ep->ep.caps.type_control = true;
+		} else {
+			ep->ep.caps.type_iso = true;
+			ep->ep.caps.type_bulk = true;
+			ep->ep.caps.type_int = true;
+		}
+
+		ep->ep.caps.dir_in = true;
+		ep->ep.caps.dir_out = true;
 	}
 	usb_ep_set_maxpacket_limit(&fusb300->ep[0]->ep, HS_CTL_MAX_PACKET_SIZE);
 	fusb300->ep[0]->epnum = 0;

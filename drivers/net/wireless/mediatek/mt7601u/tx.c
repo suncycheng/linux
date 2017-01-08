@@ -116,7 +116,10 @@ void mt7601u_tx_status(struct mt7601u_dev *dev, struct sk_buff *skb)
 	ieee80211_tx_info_clear_status(info);
 	info->status.rates[0].idx = -1;
 	info->flags |= IEEE80211_TX_STAT_ACK;
+
+	spin_lock(&dev->mac_lock);
 	ieee80211_tx_status(dev->hw, skb);
+	spin_unlock(&dev->mac_lock);
 }
 
 static int mt7601u_skb_rooms(struct mt7601u_dev *dev, struct sk_buff *skb)
@@ -172,11 +175,12 @@ mt7601u_push_txwi(struct mt7601u_dev *dev, struct sk_buff *skb,
 		ba_size = min_t(int, 63, ba_size);
 		if (info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE)
 			ba_size = 0;
-		txwi->ack_ctl |= MT76_SET(MT_TXWI_ACK_CTL_BA_WINDOW, ba_size);
+		txwi->ack_ctl |= FIELD_PREP(MT_TXWI_ACK_CTL_BA_WINDOW, ba_size);
 
-		txwi->flags = cpu_to_le16(MT_TXWI_FLAGS_AMPDU |
-					  MT76_SET(MT_TXWI_FLAGS_MPDU_DENSITY,
-						   sta->ht_cap.ampdu_density));
+		txwi->flags =
+			cpu_to_le16(MT_TXWI_FLAGS_AMPDU |
+				    FIELD_PREP(MT_TXWI_FLAGS_MPDU_DENSITY,
+					       sta->ht_cap.ampdu_density));
 		if (info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE)
 			txwi->flags = 0;
 	}
@@ -185,7 +189,7 @@ mt7601u_push_txwi(struct mt7601u_dev *dev, struct sk_buff *skb,
 
 	is_probe = !!(info->flags & IEEE80211_TX_CTL_RATE_CTRL_PROBE);
 	pkt_id = mt7601u_tx_pktid_enc(dev, rate_ctl & 0x7, is_probe);
-	pkt_len |= MT76_SET(MT_TXWI_LEN_PKTID, pkt_id);
+	pkt_len |= FIELD_PREP(MT_TXWI_LEN_PKTID, pkt_id);
 	txwi->len_ctl = cpu_to_le16(pkt_len);
 
 	return txwi;
@@ -282,9 +286,9 @@ int mt7601u_conf_tx(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	WARN_ON(cw_min > 0xf);
 	WARN_ON(cw_max > 0xf);
 
-	val = MT76_SET(MT_EDCA_CFG_AIFSN, params->aifs) |
-	      MT76_SET(MT_EDCA_CFG_CWMIN, cw_min) |
-	      MT76_SET(MT_EDCA_CFG_CWMAX, cw_max);
+	val = FIELD_PREP(MT_EDCA_CFG_AIFSN, params->aifs) |
+	      FIELD_PREP(MT_EDCA_CFG_CWMIN, cw_min) |
+	      FIELD_PREP(MT_EDCA_CFG_CWMAX, cw_max);
 	/* TODO: based on user-controlled EnableTxBurst var vendor drv sets
 	 *	 a really long txop on AC0 (see connect.c:2009) but only on
 	 *	 connect? When not connected should be 0.
@@ -292,7 +296,7 @@ int mt7601u_conf_tx(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 	if (!hw_q)
 		val |= 0x60;
 	else
-		val |= MT76_SET(MT_EDCA_CFG_TXOP, params->txop);
+		val |= FIELD_PREP(MT_EDCA_CFG_TXOP, params->txop);
 	mt76_wr(dev, MT_EDCA_CFG_AC(hw_q), val);
 
 	val = mt76_rr(dev, MT_WMM_TXOP(hw_q));

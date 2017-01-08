@@ -83,7 +83,6 @@ struct imx_timer {
 	struct clk *clk_ipg;
 	const struct imx_gpt_data *gpt;
 	struct clock_event_device ced;
-	enum clock_event_mode cem;
 	struct irqaction act;
 };
 
@@ -212,18 +211,38 @@ static int v2_set_next_event(unsigned long evt,
 				-ETIME : 0;
 }
 
+static int mxc_shutdown(struct clock_event_device *ced)
+{
+	struct imx_timer *imxtm = to_imx_timer(ced);
+	unsigned long flags;
+	u32 tcn;
+
+	/*
+	 * The timer interrupt generation is disabled at least
+	 * for enough time to call mxc_set_next_event()
+	 */
+	local_irq_save(flags);
+
+	/* Disable interrupt in GPT module */
+	imxtm->gpt->gpt_irq_disable(imxtm);
+
+	tcn = readl_relaxed(imxtm->base + imxtm->gpt->reg_tcn);
+	/* Set event time into far-far future */
+	writel_relaxed(tcn - 3, imxtm->base + imxtm->gpt->reg_tcmp);
+
+	/* Clear pending interrupt */
+	imxtm->gpt->gpt_irq_acknowledge(imxtm);
+
 #ifdef DEBUG
-static const char *clock_event_mode_label[] = {
-	[CLOCK_EVT_MODE_PERIODIC] = "CLOCK_EVT_MODE_PERIODIC",
-	[CLOCK_EVT_MODE_ONESHOT]  = "CLOCK_EVT_MODE_ONESHOT",
-	[CLOCK_EVT_MODE_SHUTDOWN] = "CLOCK_EVT_MODE_SHUTDOWN",
-	[CLOCK_EVT_MODE_UNUSED]   = "CLOCK_EVT_MODE_UNUSED",
-	[CLOCK_EVT_MODE_RESUME]   = "CLOCK_EVT_MODE_RESUME",
-};
+	printk(KERN_INFO "%s: changing mode\n", __func__);
 #endif /* DEBUG */
 
-static void mxc_set_mode(enum clock_event_mode mode,
-				struct clock_event_device *ced)
+	local_irq_restore(flags);
+
+	return 0;
+}
+
+static int mxc_set_oneshot(struct clock_event_device *ced)
 {
 	struct imx_timer *imxtm = to_imx_timer(ced);
 	unsigned long flags;
@@ -237,7 +256,7 @@ static void mxc_set_mode(enum clock_event_mode mode,
 	/* Disable interrupt in GPT module */
 	imxtm->gpt->gpt_irq_disable(imxtm);
 
-	if (mode != imxtm->cem) {
+	if (!clockevent_state_oneshot(ced)) {
 		u32 tcn = readl_relaxed(imxtm->base + imxtm->gpt->reg_tcn);
 		/* Set event time into far-far future */
 		writel_relaxed(tcn - 3, imxtm->base + imxtm->gpt->reg_tcmp);
@@ -247,37 +266,19 @@ static void mxc_set_mode(enum clock_event_mode mode,
 	}
 
 #ifdef DEBUG
-	printk(KERN_INFO "mxc_set_mode: changing mode from %s to %s\n",
-		clock_event_mode_label[imxtm->cem],
-		clock_event_mode_label[mode]);
+	printk(KERN_INFO "%s: changing mode\n", __func__);
 #endif /* DEBUG */
 
-	/* Remember timer mode */
-	imxtm->cem = mode;
-	local_irq_restore(flags);
-
-	switch (mode) {
-	case CLOCK_EVT_MODE_PERIODIC:
-		printk(KERN_ERR"mxc_set_mode: Periodic mode is not "
-				"supported for i.MX\n");
-		break;
-	case CLOCK_EVT_MODE_ONESHOT:
 	/*
 	 * Do not put overhead of interrupt enable/disable into
 	 * mxc_set_next_event(), the core has about 4 minutes
 	 * to call mxc_set_next_event() or shutdown clock after
 	 * mode switching
 	 */
-		local_irq_save(flags);
-		imxtm->gpt->gpt_irq_enable(imxtm);
-		local_irq_restore(flags);
-		break;
-	case CLOCK_EVT_MODE_SHUTDOWN:
-	case CLOCK_EVT_MODE_UNUSED:
-	case CLOCK_EVT_MODE_RESUME:
-		/* Left event sources disabled, no more interrupts appear */
-		break;
-	}
+	imxtm->gpt->gpt_irq_enable(imxtm);
+	local_irq_restore(flags);
+
+	return 0;
 }
 
 /*
@@ -303,14 +304,15 @@ static int __init mxc_clockevent_init(struct imx_timer *imxtm)
 	struct clock_event_device *ced = &imxtm->ced;
 	struct irqaction *act = &imxtm->act;
 
-	imxtm->cem = CLOCK_EVT_MODE_UNUSED;
-
 	ced->name = "mxc_timer1";
-	ced->features = CLOCK_EVT_FEAT_ONESHOT;
-	ced->set_mode = mxc_set_mode;
+	ced->features = CLOCK_EVT_FEAT_ONESHOT | CLOCK_EVT_FEAT_DYNIRQ;
+	ced->set_state_shutdown = mxc_shutdown;
+	ced->set_state_oneshot = mxc_set_oneshot;
+	ced->tick_resume = mxc_shutdown;
 	ced->set_next_event = imxtm->gpt->set_next_event;
 	ced->rating = 200;
 	ced->cpumask = cpumask_of(0);
+	ced->irq = imxtm->irq;
 	clockevents_config_and_register(ced, clk_get_rate(imxtm->clk_per),
 					0xff, 0xfffffffe);
 
@@ -405,8 +407,10 @@ static const struct imx_gpt_data imx6dl_gpt_data = {
 	.set_next_event = v2_set_next_event,
 };
 
-static void __init _mxc_timer_init(struct imx_timer *imxtm)
+static int __init _mxc_timer_init(struct imx_timer *imxtm)
 {
+	int ret;
+
 	switch (imxtm->type) {
 	case GPT_TYPE_IMX1:
 		imxtm->gpt = &imx1_gpt_data;
@@ -421,12 +425,12 @@ static void __init _mxc_timer_init(struct imx_timer *imxtm)
 		imxtm->gpt = &imx6dl_gpt_data;
 		break;
 	default:
-		BUG();
+		return -EINVAL;
 	}
 
 	if (IS_ERR(imxtm->clk_per)) {
 		pr_err("i.MX timer: unable to get clk\n");
-		return;
+		return PTR_ERR(imxtm->clk_per);
 	}
 
 	if (!IS_ERR(imxtm->clk_ipg))
@@ -444,8 +448,11 @@ static void __init _mxc_timer_init(struct imx_timer *imxtm)
 	imxtm->gpt->gpt_setup_tctl(imxtm);
 
 	/* init and register the timer to the framework */
-	mxc_clocksource_init(imxtm);
-	mxc_clockevent_init(imxtm);
+	ret = mxc_clocksource_init(imxtm);
+	if (ret)
+		return ret;
+
+	return mxc_clockevent_init(imxtm);
 }
 
 void __init mxc_timer_init(unsigned long pbase, int irq, enum imx_gpt_type type)
@@ -462,25 +469,32 @@ void __init mxc_timer_init(unsigned long pbase, int irq, enum imx_gpt_type type)
 	BUG_ON(!imxtm->base);
 
 	imxtm->type = type;
+	imxtm->irq = irq;
 
 	_mxc_timer_init(imxtm);
 }
 
-static void __init mxc_timer_init_dt(struct device_node *np,  enum imx_gpt_type type)
+static int __init mxc_timer_init_dt(struct device_node *np,  enum imx_gpt_type type)
 {
 	struct imx_timer *imxtm;
 	static int initialized;
+	int ret;
 
 	/* Support one instance only */
 	if (initialized)
-		return;
+		return 0;
 
 	imxtm = kzalloc(sizeof(*imxtm), GFP_KERNEL);
-	BUG_ON(!imxtm);
+	if (!imxtm)
+		return -ENOMEM;
 
 	imxtm->base = of_iomap(np, 0);
-	WARN_ON(!imxtm->base);
+	if (!imxtm->base)
+		return -ENXIO;
+
 	imxtm->irq = irq_of_parse_and_map(np, 0);
+	if (imxtm->irq <= 0)
+		return -EINVAL;
 
 	imxtm->clk_ipg = of_clk_get_by_name(np, "ipg");
 
@@ -491,22 +505,26 @@ static void __init mxc_timer_init_dt(struct device_node *np,  enum imx_gpt_type 
 
 	imxtm->type = type;
 
-	_mxc_timer_init(imxtm);
+	ret = _mxc_timer_init(imxtm);
+	if (ret)
+		return ret;
 
 	initialized = 1;
+
+	return 0;
 }
 
-static void __init imx1_timer_init_dt(struct device_node *np)
+static int __init imx1_timer_init_dt(struct device_node *np)
 {
-	mxc_timer_init_dt(np, GPT_TYPE_IMX1);
+	return mxc_timer_init_dt(np, GPT_TYPE_IMX1);
 }
 
-static void __init imx21_timer_init_dt(struct device_node *np)
+static int __init imx21_timer_init_dt(struct device_node *np)
 {
-	mxc_timer_init_dt(np, GPT_TYPE_IMX21);
+	return mxc_timer_init_dt(np, GPT_TYPE_IMX21);
 }
 
-static void __init imx31_timer_init_dt(struct device_node *np)
+static int __init imx31_timer_init_dt(struct device_node *np)
 {
 	enum imx_gpt_type type = GPT_TYPE_IMX31;
 
@@ -519,12 +537,12 @@ static void __init imx31_timer_init_dt(struct device_node *np)
 	if (of_machine_is_compatible("fsl,imx6dl"))
 		type = GPT_TYPE_IMX6DL;
 
-	mxc_timer_init_dt(np, type);
+	return mxc_timer_init_dt(np, type);
 }
 
-static void __init imx6dl_timer_init_dt(struct device_node *np)
+static int __init imx6dl_timer_init_dt(struct device_node *np)
 {
-	mxc_timer_init_dt(np, GPT_TYPE_IMX6DL);
+	return mxc_timer_init_dt(np, GPT_TYPE_IMX6DL);
 }
 
 CLOCKSOURCE_OF_DECLARE(imx1_timer, "fsl,imx1-gpt", imx1_timer_init_dt);

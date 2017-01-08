@@ -12,10 +12,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
- *
  *
  * File: rf.c
  *
@@ -734,9 +730,9 @@ int vnt_rf_set_txpower(struct vnt_private *priv, u8 power, u32 rate)
 			return false;
 
 		/*
-		* 0x080F1B00 for 3 wire control TxGain(D10)
-		* and 0x31 as TX Gain value
-		*/
+		 * 0x080F1B00 for 3 wire control TxGain(D10)
+		 * and 0x31 as TX Gain value
+		 */
 		power_setting = 0x080c0b00 | (power << 12);
 
 		ret &= vnt_rf_write_embedded(priv, power_setting);
@@ -804,8 +800,8 @@ int vnt_rf_set_txpower(struct vnt_private *priv, u8 power, u32 rate)
 /* Convert rssi to dbm */
 void vnt_rf_rssi_to_dbm(struct vnt_private *priv, u8 rssi, long *dbm)
 {
-	u8 idx = (((rssi & 0xc0) >> 6) & 0x03);
-	long b = (rssi & 0x3f);
+	u8 idx = ((rssi & 0xc0) >> 6) & 0x03;
+	long b = rssi & 0x3f;
 	long a = 0;
 	u8 airoharf[4] = {0, 18, 0, 40};
 
@@ -921,8 +917,8 @@ void vnt_rf_table_download(struct vnt_private *priv)
 	if (priv->rf_type == RF_AIROHA7230) {
 		length1 = CB_AL7230_INIT_SEQ * 3;
 		length2 = CB_MAX_CHANNEL * 3;
-		addr1 = &(al7230_init_table_amode[0][0]);
-		addr2 = &(al7230_channel_table2[0][0]);
+		addr1 = &al7230_init_table_amode[0][0];
+		addr2 = &al7230_channel_table2[0][0];
 
 		memcpy(array, addr1, length1);
 

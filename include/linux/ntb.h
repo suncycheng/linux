@@ -284,7 +284,7 @@ static inline int ntb_dev_ops_is_valid(const struct ntb_dev_ops *ops)
 		/* ops->db_read_mask			&& */
 		ops->db_set_mask			&&
 		ops->db_clear_mask			&&
-		ops->peer_db_addr			&&
+		/* ops->peer_db_addr			&& */
 		/* ops->peer_db_read			&& */
 		ops->peer_db_set			&&
 		/* ops->peer_db_clear			&& */
@@ -295,7 +295,7 @@ static inline int ntb_dev_ops_is_valid(const struct ntb_dev_ops *ops)
 		ops->spad_count				&&
 		ops->spad_read				&&
 		ops->spad_write				&&
-		ops->peer_spad_addr			&&
+		/* ops->peer_spad_addr			&& */
 		/* ops->peer_spad_read			&& */
 		ops->peer_spad_write			&&
 		1;
@@ -522,10 +522,9 @@ static inline int ntb_mw_clear_trans(struct ntb_dev *ntb, int idx)
  * @speed:	OUT - The link speed expressed as PCIe generation number.
  * @width:	OUT - The link width expressed as the number of PCIe lanes.
  *
- * Set the translation of a memory window.  The peer may access local memory
- * through the window starting at the address, up to the size.  The address
- * must be aligned to the alignment specified by ntb_mw_get_range().  The size
- * must be aligned to the size alignment specified by ntb_mw_get_range().
+ * Get the current state of the ntb link.  It is recommended to query the link
+ * state once after every link event.  It is safe to query the link state in
+ * the context of the link event callback.
  *
  * Return: One if the link is up, zero if the link is down, otherwise a
  *		negative value indicating the error number.
@@ -758,6 +757,9 @@ static inline int ntb_peer_db_addr(struct ntb_dev *ntb,
 				   phys_addr_t *db_addr,
 				   resource_size_t *db_size)
 {
+	if (!ntb->ops->peer_db_addr)
+		return -EINVAL;
+
 	return ntb->ops->peer_db_addr(ntb, db_addr, db_size);
 }
 
@@ -795,7 +797,7 @@ static inline int ntb_peer_db_set(struct ntb_dev *ntb, u64 db_bits)
 }
 
 /**
- * ntb_peer_db_clear() - clear bits in the local doorbell register
+ * ntb_peer_db_clear() - clear bits in the peer doorbell register
  * @ntb:	NTB device context.
  * @db_bits:	Doorbell bits to clear.
  *
@@ -894,7 +896,7 @@ static inline int ntb_spad_is_unsafe(struct ntb_dev *ntb)
 }
 
 /**
- * ntb_mw_count() - get the number of scratchpads
+ * ntb_spad_count() - get the number of scratchpads
  * @ntb:	NTB device context.
  *
  * Hardware and topology may support a different number of scratchpads.
@@ -949,6 +951,9 @@ static inline int ntb_spad_write(struct ntb_dev *ntb, int idx, u32 val)
 static inline int ntb_peer_spad_addr(struct ntb_dev *ntb, int idx,
 				     phys_addr_t *spad_addr)
 {
+	if (!ntb->ops->peer_spad_addr)
+		return -EINVAL;
+
 	return ntb->ops->peer_spad_addr(ntb, idx, spad_addr);
 }
 
@@ -963,6 +968,9 @@ static inline int ntb_peer_spad_addr(struct ntb_dev *ntb, int idx,
  */
 static inline u32 ntb_peer_spad_read(struct ntb_dev *ntb, int idx)
 {
+	if (!ntb->ops->peer_spad_read)
+		return 0;
+
 	return ntb->ops->peer_spad_read(ntb, idx);
 }
 

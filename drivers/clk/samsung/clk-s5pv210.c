@@ -11,8 +11,6 @@
  * Common Clock Framework support for all S5PC110/S5PV210 SoCs.
  */
 
-#include <linux/clk.h>
-#include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -505,15 +503,15 @@ static const struct samsung_mux_clock s5p6442_mux_clks[] __initconst = {
 
 /* S5PV210-specific fixed rate clocks generated inside the SoC. */
 static const struct samsung_fixed_rate_clock s5pv210_frate_clks[] __initconst = {
-	FRATE(SCLK_HDMI27M, "sclk_hdmi27m", NULL, CLK_IS_ROOT, 27000000),
-	FRATE(SCLK_HDMIPHY, "sclk_hdmiphy", NULL, CLK_IS_ROOT, 27000000),
-	FRATE(SCLK_USBPHY0, "sclk_usbphy0", NULL, CLK_IS_ROOT, 48000000),
-	FRATE(SCLK_USBPHY1, "sclk_usbphy1", NULL, CLK_IS_ROOT, 48000000),
+	FRATE(SCLK_HDMI27M, "sclk_hdmi27m", NULL, 0, 27000000),
+	FRATE(SCLK_HDMIPHY, "sclk_hdmiphy", NULL, 0, 27000000),
+	FRATE(SCLK_USBPHY0, "sclk_usbphy0", NULL, 0, 48000000),
+	FRATE(SCLK_USBPHY1, "sclk_usbphy1", NULL, 0, 48000000),
 };
 
 /* S5P6442-specific fixed rate clocks generated inside the SoC. */
 static const struct samsung_fixed_rate_clock s5p6442_frate_clks[] __initconst = {
-	FRATE(SCLK_USBPHY0, "sclk_usbphy0", NULL, CLK_IS_ROOT, 30000000),
+	FRATE(SCLK_USBPHY0, "sclk_usbphy0", NULL, 0, 30000000),
 };
 
 /* Common clock dividers. */
@@ -786,8 +784,6 @@ static void __init __s5pv210_clk_init(struct device_node *np,
 	struct samsung_clk_provider *ctx;
 
 	ctx = samsung_clk_init(np, reg_base, NR_CLKS);
-	if (!ctx)
-		panic("%s: unable to allocate context.\n", __func__);
 
 	samsung_clk_register_mux(ctx, early_mux_clks,
 					ARRAY_SIZE(early_mux_clks));
@@ -827,6 +823,8 @@ static void __init __s5pv210_clk_init(struct device_node *np,
 						ARRAY_SIZE(s5pv210_aliases));
 
 	s5pv210_clk_sleep_init();
+
+	samsung_clk_of_add_provider(np, ctx);
 
 	pr_info("%s clocks: mout_apll = %ld, mout_mpll = %ld\n"
 		"\tmout_epll = %ld, mout_vpll = %ld\n",

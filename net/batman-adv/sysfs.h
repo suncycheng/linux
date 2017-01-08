@@ -1,4 +1,4 @@
-/* Copyright (C) 2010-2015 B.A.T.M.A.N. contributors:
+/* Copyright (C) 2010-2016  B.A.T.M.A.N. contributors:
  *
  * Marek Lindner
  *
@@ -23,8 +23,6 @@
 #include <linux/sysfs.h>
 #include <linux/types.h>
 
-struct batadv_priv;
-struct batadv_softif_vlan;
 struct kobject;
 struct net_device;
 

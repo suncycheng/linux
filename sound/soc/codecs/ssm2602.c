@@ -75,11 +75,10 @@ static const struct soc_enum ssm2602_enum[] = {
 			ssm2602_deemph),
 };
 
-static const unsigned int ssm260x_outmix_tlv[] = {
-	TLV_DB_RANGE_HEAD(2),
+static const DECLARE_TLV_DB_RANGE(ssm260x_outmix_tlv,
 	0, 47, TLV_DB_SCALE_ITEM(TLV_DB_GAIN_MUTE, 0, 0),
-	48, 127, TLV_DB_SCALE_ITEM(-7400, 100, 0),
-};
+	48, 127, TLV_DB_SCALE_ITEM(-7400, 100, 0)
+);
 
 static const DECLARE_TLV_DB_SCALE(ssm260x_inpga_tlv, -3450, 150, 0);
 static const DECLARE_TLV_DB_SCALE(ssm260x_sidetone_tlv, -1500, 300, 0);
@@ -598,12 +597,14 @@ static struct snd_soc_codec_driver soc_codec_dev_ssm2602 = {
 	.set_bias_level = ssm2602_set_bias_level,
 	.suspend_bias_off = true,
 
-	.controls = ssm260x_snd_controls,
-	.num_controls = ARRAY_SIZE(ssm260x_snd_controls),
-	.dapm_widgets = ssm260x_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(ssm260x_dapm_widgets),
-	.dapm_routes = ssm260x_routes,
-	.num_dapm_routes = ARRAY_SIZE(ssm260x_routes),
+	.component_driver = {
+		.controls		= ssm260x_snd_controls,
+		.num_controls		= ARRAY_SIZE(ssm260x_snd_controls),
+		.dapm_widgets		= ssm260x_dapm_widgets,
+		.num_dapm_widgets	= ARRAY_SIZE(ssm260x_dapm_widgets),
+		.dapm_routes		= ssm260x_routes,
+		.num_dapm_routes	= ARRAY_SIZE(ssm260x_routes),
+	},
 };
 
 static bool ssm2602_register_volatile(struct device *dev, unsigned int reg)

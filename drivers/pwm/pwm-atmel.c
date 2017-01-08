@@ -64,7 +64,8 @@ struct atmel_pwm_chip {
 	void __iomem *base;
 
 	unsigned int updated_pwms;
-	struct mutex isr_lock; /* ISR is cleared when read, ensure only one thread does that */
+	/* ISR is cleared when read, ensure only one thread does that */
+	struct mutex isr_lock;
 
 	void (*config)(struct pwm_chip *chip, struct pwm_device *pwm,
 		       unsigned long dty, unsigned long prd);
@@ -114,7 +115,7 @@ static int atmel_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
 	u32 val;
 	int ret;
 
-	if (test_bit(PWMF_ENABLED, &pwm->flags) && (period_ns != pwm->period)) {
+	if (pwm_is_enabled(pwm) && (period_ns != pwm_get_period(pwm))) {
 		dev_err(chip->dev, "cannot change PWM period while enabled\n");
 		return -EBUSY;
 	}
@@ -176,7 +177,7 @@ static void atmel_pwm_config_v1(struct pwm_chip *chip, struct pwm_device *pwm,
 	 * If the PWM channel is enabled, only update CDTY by using the update
 	 * register, it needs to set bit 10 of CMR to 0
 	 */
-	if (test_bit(PWMF_ENABLED, &pwm->flags))
+	if (pwm_is_enabled(pwm))
 		return;
 	/*
 	 * If the PWM channel is disabled, write value to duty and period
@@ -191,7 +192,7 @@ static void atmel_pwm_config_v2(struct pwm_chip *chip, struct pwm_device *pwm,
 {
 	struct atmel_pwm_chip *atmel_pwm = to_atmel_pwm_chip(chip);
 
-	if (test_bit(PWMF_ENABLED, &pwm->flags)) {
+	if (pwm_is_enabled(pwm)) {
 		/*
 		 * If the PWM channel is enabled, using the duty update register
 		 * to update the value.
@@ -271,6 +272,16 @@ static void atmel_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 	mutex_unlock(&atmel_pwm->isr_lock);
 	atmel_pwm_writel(atmel_pwm, PWM_DIS, 1 << pwm->hwpwm);
 
+	/*
+	 * Wait for the PWM channel disable operation to be effective before
+	 * stopping the clock.
+	 */
+	timeout = jiffies + 2 * HZ;
+
+	while ((atmel_pwm_readl(atmel_pwm, PWM_SR) & (1 << pwm->hwpwm)) &&
+	       time_before(jiffies, timeout))
+		usleep_range(10, 100);
+
 	clk_disable(atmel_pwm->clk);
 }
 
@@ -324,21 +335,14 @@ MODULE_DEVICE_TABLE(of, atmel_pwm_dt_ids);
 static inline const struct atmel_pwm_data *
 atmel_pwm_get_driver_data(struct platform_device *pdev)
 {
-	if (pdev->dev.of_node) {
-		const struct of_device_id *match;
+	const struct platform_device_id *id;
 
-		match = of_match_device(atmel_pwm_dt_ids, &pdev->dev);
-		if (!match)
-			return NULL;
+	if (pdev->dev.of_node)
+		return of_device_get_match_data(&pdev->dev);
 
-		return match->data;
-	} else {
-		const struct platform_device_id *id;
+	id = platform_get_device_id(pdev);
 
-		id = platform_get_device_id(pdev);
-
-		return (struct atmel_pwm_data *)id->driver_data;
-	}
+	return (struct atmel_pwm_data *)id->driver_data;
 }
 
 static int atmel_pwm_probe(struct platform_device *pdev)

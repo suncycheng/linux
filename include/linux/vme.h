@@ -81,6 +81,9 @@ struct vme_resource {
 
 extern struct bus_type vme_bus_type;
 
+/* Number of VME interrupt vectors */
+#define VME_NUM_STATUSID	256
+
 /* VME_MAX_BRIDGES comes from the type of vme_bus_numbers */
 #define VME_MAX_BRIDGES		(sizeof(unsigned int)*8)
 #define VME_MAX_SLOTS		32
@@ -110,7 +113,6 @@ struct vme_driver {
 	int (*match)(struct vme_dev *);
 	int (*probe)(struct vme_dev *);
 	int (*remove)(struct vme_dev *);
-	void (*shutdown)(void);
 	struct device_driver driver;
 	struct list_head devices;
 };
@@ -163,7 +165,7 @@ struct vme_resource *vme_lm_request(struct vme_dev *);
 int vme_lm_count(struct vme_resource *);
 int vme_lm_set(struct vme_resource *, unsigned long long, u32, u32);
 int vme_lm_get(struct vme_resource *, unsigned long long *, u32 *, u32 *);
-int vme_lm_attach(struct vme_resource *, int, void (*callback)(int));
+int vme_lm_attach(struct vme_resource *, int, void (*callback)(void *), void *);
 int vme_lm_detach(struct vme_resource *, int);
 void vme_lm_free(struct vme_resource *);
 

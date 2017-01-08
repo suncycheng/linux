@@ -10,7 +10,7 @@
 #include <linux/module.h>
 #include <linux/device-mapper.h>
 
-#include "dm.h"
+#include "dm-core.h"
 #include "dm-stats.h"
 
 #define DM_MSG_PREFIX "stats"
@@ -457,12 +457,24 @@ static int dm_stats_list(struct dm_stats *stats, const char *program,
 	list_for_each_entry(s, &stats->list, list_entry) {
 		if (!program || !strcmp(program, s->program_id)) {
 			len = s->end - s->start;
-			DMEMIT("%d: %llu+%llu %llu %s %s\n", s->id,
+			DMEMIT("%d: %llu+%llu %llu %s %s", s->id,
 				(unsigned long long)s->start,
 				(unsigned long long)len,
 				(unsigned long long)s->step,
 				s->program_id,
 				s->aux_data);
+			if (s->stat_flags & STAT_PRECISE_TIMESTAMPS)
+				DMEMIT(" precise_timestamps");
+			if (s->n_histogram_entries) {
+				unsigned i;
+				DMEMIT(" histogram:");
+				for (i = 0; i < s->n_histogram_entries; i++) {
+					if (i)
+						DMEMIT(",");
+					DMEMIT("%llu", s->histogram_boundaries[i]);
+				}
+			}
+			DMEMIT("\n");
 		}
 	}
 	mutex_unlock(&stats->mutex);
@@ -502,11 +514,10 @@ static void dm_stat_round(struct dm_stat *s, struct dm_stat_shared *shared,
 }
 
 static void dm_stat_for_entry(struct dm_stat *s, size_t entry,
-			      unsigned long bi_rw, sector_t len,
+			      int idx, sector_t len,
 			      struct dm_stats_aux *stats_aux, bool end,
 			      unsigned long duration_jiffies)
 {
-	unsigned long idx = bi_rw & REQ_WRITE;
 	struct dm_stat_shared *shared = &s->stat_shared[entry];
 	struct dm_stat_percpu *p;
 
@@ -572,7 +583,7 @@ static void dm_stat_for_entry(struct dm_stat *s, size_t entry,
 #endif
 }
 
-static void __dm_stat_bio(struct dm_stat *s, unsigned long bi_rw,
+static void __dm_stat_bio(struct dm_stat *s, int bi_rw,
 			  sector_t bi_sector, sector_t end_sector,
 			  bool end, unsigned long duration_jiffies,
 			  struct dm_stats_aux *stats_aux)
@@ -633,8 +644,8 @@ void dm_stats_account_io(struct dm_stats *stats, unsigned long bi_rw,
 		last = raw_cpu_ptr(stats->last);
 		stats_aux->merged =
 			(bi_sector == (ACCESS_ONCE(last->last_sector) &&
-				       ((bi_rw & (REQ_WRITE | REQ_DISCARD)) ==
-					(ACCESS_ONCE(last->last_rw) & (REQ_WRITE | REQ_DISCARD)))
+				       ((bi_rw == WRITE) ==
+					(ACCESS_ONCE(last->last_rw) == WRITE))
 				       ));
 		ACCESS_ONCE(last->last_sector) = end_sector;
 		ACCESS_ONCE(last->last_rw) = bi_rw;

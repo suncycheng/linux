@@ -286,6 +286,28 @@ void snd_hdac_stream_release(struct hdac_stream *azx_dev)
 }
 EXPORT_SYMBOL_GPL(snd_hdac_stream_release);
 
+/**
+ * snd_hdac_get_stream - return hdac_stream based on stream_tag and
+ * direction
+ *
+ * @bus: HD-audio core bus
+ * @dir: direction for the stream to be found
+ * @stream_tag: stream tag for stream to be found
+ */
+struct hdac_stream *snd_hdac_get_stream(struct hdac_bus *bus,
+					int dir, int stream_tag)
+{
+	struct hdac_stream *s;
+
+	list_for_each_entry(s, &bus->stream_list, list) {
+		if (s->direction == dir && s->stream_tag == stream_tag)
+			return s;
+	}
+
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(snd_hdac_get_stream);
+
 /*
  * set up a BDL entry
  */
@@ -404,7 +426,8 @@ int snd_hdac_stream_setup_periods(struct hdac_stream *azx_dev)
 }
 EXPORT_SYMBOL_GPL(snd_hdac_stream_setup_periods);
 
-/* snd_hdac_stream_set_params - set stream parameters
+/**
+ * snd_hdac_stream_set_params - set stream parameters
  * @azx_dev: HD-audio core stream for which parameters are to be set
  * @format_val: format value parameter
  *
@@ -442,7 +465,7 @@ int snd_hdac_stream_set_params(struct hdac_stream *azx_dev,
 }
 EXPORT_SYMBOL_GPL(snd_hdac_stream_set_params);
 
-static cycle_t azx_cc_read(const struct cyclecounter *cc)
+static u64 azx_cc_read(const struct cyclecounter *cc)
 {
 	struct hdac_stream *azx_dev = container_of(cc, struct hdac_stream, cc);
 
@@ -450,7 +473,7 @@ static cycle_t azx_cc_read(const struct cyclecounter *cc)
 }
 
 static void azx_timecounter_init(struct hdac_stream *azx_dev,
-				 bool force, cycle_t last)
+				 bool force, u64 last)
 {
 	struct timecounter *tc = &azx_dev->tc;
 	struct cyclecounter *cc = &azx_dev->cc;
@@ -500,7 +523,7 @@ void snd_hdac_stream_timecounter_init(struct hdac_stream *azx_dev,
 	struct snd_pcm_runtime *runtime = azx_dev->substream->runtime;
 	struct hdac_stream *s;
 	bool inited = false;
-	cycle_t cycle_last = 0;
+	u64 cycle_last = 0;
 	int i = 0;
 
 	list_for_each_entry(s, &bus->stream_list, list) {

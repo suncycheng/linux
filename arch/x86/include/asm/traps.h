@@ -112,10 +112,16 @@ asmlinkage void smp_threshold_interrupt(void);
 asmlinkage void smp_deferred_error_interrupt(void);
 #endif
 
-extern enum ctx_state ist_enter(struct pt_regs *regs);
-extern void ist_exit(struct pt_regs *regs, enum ctx_state prev_state);
+extern void ist_enter(struct pt_regs *regs);
+extern void ist_exit(struct pt_regs *regs);
 extern void ist_begin_non_atomic(struct pt_regs *regs);
 extern void ist_end_non_atomic(void);
+
+#ifdef CONFIG_VMAP_STACK
+void __noreturn handle_stack_overflow(const char *message,
+				      struct pt_regs *regs,
+				      unsigned long fault_address);
+#endif
 
 /* Interrupts/Exceptions */
 enum {

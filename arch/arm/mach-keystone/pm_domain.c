@@ -16,8 +16,9 @@
 #include <linux/pm_runtime.h>
 #include <linux/pm_clock.h>
 #include <linux/platform_device.h>
-#include <linux/clk-provider.h>
 #include <linux/of.h>
+
+#include "keystone.h"
 
 static struct dev_pm_domain keystone_pm_domain = {
 	.ops = {

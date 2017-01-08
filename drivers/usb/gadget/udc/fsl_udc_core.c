@@ -585,8 +585,7 @@ static int fsl_ep_enable(struct usb_ep *_ep,
 		break;
 	case USB_ENDPOINT_XFER_ISOC:
 		/* Calculate transactions needed for high bandwidth iso */
-		mult = (unsigned char)(1 + ((max >> 11) & 0x03));
-		max = max & 0x7ff;	/* bit 0~10 */
+		mult = usb_endpoint_maxp_mult(desc);
 		/* 3 transactions at most */
 		if (mult > 3)
 			goto en_done;
@@ -2312,6 +2311,19 @@ static int struct_ep_setup(struct fsl_udc *udc, unsigned char index,
 
 	ep->ep.ops = &fsl_ep_ops;
 	ep->stopped = 0;
+
+	if (index == 0) {
+		ep->ep.caps.type_control = true;
+	} else {
+		ep->ep.caps.type_iso = true;
+		ep->ep.caps.type_bulk = true;
+		ep->ep.caps.type_int = true;
+	}
+
+	if (index & 1)
+		ep->ep.caps.dir_in = true;
+	else
+		ep->ep.caps.dir_out = true;
 
 	/* for ep0: maxP defined in desc
 	 * for other eps, maxP is set by epautoconfig() called by gadget layer

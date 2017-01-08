@@ -255,8 +255,8 @@ static int cx24123_i2c_writereg(struct cx24123_state *state,
 
 	err = i2c_transfer(state->i2c, &msg, 1);
 	if (err != 1) {
-		printk("%s: writereg error(err == %i, reg == 0x%02x,"
-			 " data == 0x%02x)\n", __func__, err, reg, data);
+		printk("%s: writereg error(err == %i, reg == 0x%02x, data == 0x%02x)\n",
+		       __func__, err, reg, data);
 		return err;
 	}
 
@@ -945,9 +945,9 @@ static int cx24123_set_frontend(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int cx24123_get_frontend(struct dvb_frontend *fe)
+static int cx24123_get_frontend(struct dvb_frontend *fe,
+				struct dtv_frontend_properties *p)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct cx24123_state *state = fe->demodulator_priv;
 
 	dprintk("\n");
@@ -1011,7 +1011,7 @@ static int cx24123_tune(struct dvb_frontend *fe,
 
 static int cx24123_get_algo(struct dvb_frontend *fe)
 {
-	return 1; /* FE_ALGO_HW */
+	return DVBFE_ALGO_HW;
 }
 
 static void cx24123_release(struct dvb_frontend *fe)
@@ -1049,7 +1049,7 @@ struct i2c_adapter *
 }
 EXPORT_SYMBOL(cx24123_get_tuner_i2c_adapter);
 
-static struct dvb_frontend_ops cx24123_ops;
+static const struct dvb_frontend_ops cx24123_ops;
 
 struct dvb_frontend *cx24123_attach(const struct cx24123_config *config,
 				    struct i2c_adapter *i2c)
@@ -1111,7 +1111,7 @@ error:
 }
 EXPORT_SYMBOL(cx24123_attach);
 
-static struct dvb_frontend_ops cx24123_ops = {
+static const struct dvb_frontend_ops cx24123_ops = {
 	.delsys = { SYS_DVBS },
 	.info = {
 		.name = "Conexant CX24123/CX24109",

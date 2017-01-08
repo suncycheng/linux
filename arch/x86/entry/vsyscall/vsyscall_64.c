@@ -38,7 +38,14 @@
 #define CREATE_TRACE_POINTS
 #include "vsyscall_trace.h"
 
-static enum { EMULATE, NATIVE, NONE } vsyscall_mode = EMULATE;
+static enum { EMULATE, NATIVE, NONE } vsyscall_mode =
+#if defined(CONFIG_LEGACY_VSYSCALL_NATIVE)
+	NATIVE;
+#elif defined(CONFIG_LEGACY_VSYSCALL_NONE)
+	NONE;
+#else
+	EMULATE;
+#endif
 
 static int __init vsyscall_setup(char *str)
 {
@@ -89,7 +96,7 @@ static bool write_ok_or_segv(unsigned long ptr, size_t size)
 {
 	/*
 	 * XXX: if access_ok, get_user, and put_user handled
-	 * sig_on_uaccess_error, this could go away.
+	 * sig_on_uaccess_err, this could go away.
 	 */
 
 	if (!access_ok(VERIFY_WRITE, (void __user *)ptr, size)) {
@@ -118,7 +125,7 @@ bool emulate_vsyscall(struct pt_regs *regs, unsigned long address)
 	struct task_struct *tsk;
 	unsigned long caller;
 	int vsyscall_nr, syscall_nr, tmp;
-	int prev_sig_on_uaccess_error;
+	int prev_sig_on_uaccess_err;
 	long ret;
 
 	/*
@@ -200,7 +207,7 @@ bool emulate_vsyscall(struct pt_regs *regs, unsigned long address)
 	 */
 	regs->orig_ax = syscall_nr;
 	regs->ax = -ENOSYS;
-	tmp = secure_computing();
+	tmp = secure_computing(NULL);
 	if ((!tmp && regs->orig_ax != syscall_nr) || regs->ip != address) {
 		warn_bad_vsyscall(KERN_DEBUG, regs,
 				  "seccomp tried to change syscall nr or ip");
@@ -214,8 +221,8 @@ bool emulate_vsyscall(struct pt_regs *regs, unsigned long address)
 	 * With a real vsyscall, page faults cause SIGSEGV.  We want to
 	 * preserve that behavior to make writing exploits harder.
 	 */
-	prev_sig_on_uaccess_error = current_thread_info()->sig_on_uaccess_error;
-	current_thread_info()->sig_on_uaccess_error = 1;
+	prev_sig_on_uaccess_err = current->thread.sig_on_uaccess_err;
+	current->thread.sig_on_uaccess_err = 1;
 
 	ret = -EFAULT;
 	switch (vsyscall_nr) {
@@ -236,7 +243,7 @@ bool emulate_vsyscall(struct pt_regs *regs, unsigned long address)
 		break;
 	}
 
-	current_thread_info()->sig_on_uaccess_error = prev_sig_on_uaccess_error;
+	current->thread.sig_on_uaccess_err = prev_sig_on_uaccess_err;
 
 check_fault:
 	if (ret == -EFAULT) {
@@ -277,7 +284,7 @@ static const char *gate_vma_name(struct vm_area_struct *vma)
 {
 	return "[vsyscall]";
 }
-static struct vm_operations_struct gate_vma_ops = {
+static const struct vm_operations_struct gate_vma_ops = {
 	.name = gate_vma_name,
 };
 static struct vm_area_struct gate_vma = {
@@ -290,7 +297,7 @@ static struct vm_area_struct gate_vma = {
 
 struct vm_area_struct *get_gate_vma(struct mm_struct *mm)
 {
-#ifdef CONFIG_IA32_EMULATION
+#ifdef CONFIG_COMPAT
 	if (!mm || mm->context.ia32_compat)
 		return NULL;
 #endif

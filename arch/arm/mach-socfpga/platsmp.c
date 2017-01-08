@@ -94,6 +94,7 @@ static void __init socfpga_smp_prepare_cpus(unsigned int max_cpus)
 	scu_enable(socfpga_scu_base_addr);
 }
 
+#ifdef CONFIG_HOTPLUG_CPU
 /*
  * platform-specific code to shutdown a CPU
  *
@@ -106,19 +107,33 @@ static void socfpga_cpu_die(unsigned int cpu)
 		cpu_do_idle();
 }
 
-static struct smp_operations socfpga_smp_ops __initdata = {
+/*
+ * We need a dummy function so that platform_can_cpu_hotplug() knows
+ * we support CPU hotplug. However, the function does not need to do
+ * anything, because CPUs going offline just do WFI. We could reset
+ * the CPUs but it would increase power consumption.
+ */
+static int socfpga_cpu_kill(unsigned int cpu)
+{
+	return 1;
+}
+#endif
+
+static const struct smp_operations socfpga_smp_ops __initconst = {
 	.smp_prepare_cpus	= socfpga_smp_prepare_cpus,
 	.smp_boot_secondary	= socfpga_boot_secondary,
 #ifdef CONFIG_HOTPLUG_CPU
 	.cpu_die		= socfpga_cpu_die,
+	.cpu_kill		= socfpga_cpu_kill,
 #endif
 };
 
-static struct smp_operations socfpga_a10_smp_ops __initdata = {
+static const struct smp_operations socfpga_a10_smp_ops __initconst = {
 	.smp_prepare_cpus	= socfpga_smp_prepare_cpus,
 	.smp_boot_secondary	= socfpga_a10_boot_secondary,
 #ifdef CONFIG_HOTPLUG_CPU
 	.cpu_die		= socfpga_cpu_die,
+	.cpu_kill		= socfpga_cpu_kill,
 #endif
 };
 

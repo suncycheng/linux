@@ -7,6 +7,7 @@
 #ifndef _FUTEX_H
 #define _FUTEX_H
 
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -56,6 +57,24 @@ futex_wake(u_int32_t *uaddr, int nr_wake, int opflags)
 }
 
 /**
+ * futex_lock_pi() - block on uaddr as a PI mutex
+ */
+static inline int
+futex_lock_pi(u_int32_t *uaddr, struct timespec *timeout, int opflags)
+{
+	return futex(uaddr, FUTEX_LOCK_PI, 0, timeout, NULL, 0, opflags);
+}
+
+/**
+ * futex_unlock_pi() - release uaddr as a PI mutex, waking the top waiter
+ */
+static inline int
+futex_unlock_pi(u_int32_t *uaddr, int opflags)
+{
+	return futex(uaddr, FUTEX_UNLOCK_PI, 0, NULL, NULL, 0, opflags);
+}
+
+/**
 * futex_cmp_requeue() - requeue tasks from uaddr to uaddr2
 * @nr_wake:        wake up to this many tasks
 * @nr_requeue:        requeue up to this many tasks
@@ -80,5 +99,8 @@ static inline int pthread_attr_setaffinity_np(pthread_attr_t *attr,
 	return 0;
 }
 #endif
+
+/* User input sanitation */
+#define futexbench_sanitize_numeric(__n) abs((__n))
 
 #endif /* _FUTEX_H */

@@ -52,7 +52,8 @@ enum kgd_engine_type {
 	KGD_ENGINE_MEC1,
 	KGD_ENGINE_MEC2,
 	KGD_ENGINE_RLC,
-	KGD_ENGINE_SDMA,
+	KGD_ENGINE_SDMA1,
+	KGD_ENGINE_SDMA2,
 	KGD_ENGINE_MAX
 };
 
@@ -220,7 +221,7 @@ struct kgd2kfd_calls {
 	int (*resume)(struct kfd_dev *kfd);
 };
 
-bool kgd2kfd_init(unsigned interface_version,
+int kgd2kfd_init(unsigned interface_version,
 		const struct kgd2kfd_calls **g2f);
 
 #endif	/* KGD_KFD_INTERFACE_H_INCLUDED */

@@ -97,20 +97,6 @@ EXPORT_SYMBOL_GPL(clockevent_delta2ns);
 static int __clockevents_switch_state(struct clock_event_device *dev,
 				      enum clock_event_state state)
 {
-	/* Transition with legacy set_mode() callback */
-	if (dev->set_mode) {
-		/* Legacy callback doesn't support new modes */
-		if (state > CLOCK_EVT_STATE_ONESHOT)
-			return -ENOSYS;
-		/*
-		 * 'clock_event_state' and 'clock_event_mode' have 1-to-1
-		 * mapping until *_ONESHOT, and so a simple cast will work.
-		 */
-		dev->set_mode((enum clock_event_mode)state, dev);
-		dev->mode = (enum clock_event_mode)state;
-		return 0;
-	}
-
 	if (dev->features & CLOCK_EVT_FEAT_DUMMY)
 		return 0;
 
@@ -193,7 +179,7 @@ void clockevents_switch_state(struct clock_event_device *dev,
 void clockevents_shutdown(struct clock_event_device *dev)
 {
 	clockevents_switch_state(dev, CLOCK_EVT_STATE_SHUTDOWN);
-	dev->next_event.tv64 = KTIME_MAX;
+	dev->next_event = KTIME_MAX;
 }
 
 /**
@@ -204,12 +190,8 @@ int clockevents_tick_resume(struct clock_event_device *dev)
 {
 	int ret = 0;
 
-	if (dev->set_mode) {
-		dev->set_mode(CLOCK_EVT_MODE_RESUME, dev);
-		dev->mode = CLOCK_EVT_MODE_RESUME;
-	} else if (dev->tick_resume) {
+	if (dev->tick_resume)
 		ret = dev->tick_resume(dev);
-	}
 
 	return ret;
 }
@@ -231,7 +213,7 @@ static int clockevents_increase_min_delta(struct clock_event_device *dev)
 	if (dev->min_delta_ns >= MIN_DELTA_LIMIT) {
 		printk_deferred(KERN_WARNING
 				"CE: Reprogramming failure. Giving up\n");
-		dev->next_event.tv64 = KTIME_MAX;
+		dev->next_event = KTIME_MAX;
 		return -ETIME;
 	}
 
@@ -328,7 +310,7 @@ int clockevents_program_event(struct clock_event_device *dev, ktime_t expires,
 	int64_t delta;
 	int rc;
 
-	if (unlikely(expires.tv64 < 0)) {
+	if (unlikely(expires < 0)) {
 		WARN_ON_ONCE(1);
 		return -ETIME;
 	}
@@ -460,26 +442,6 @@ int clockevents_unbind_device(struct clock_event_device *ced, int cpu)
 }
 EXPORT_SYMBOL_GPL(clockevents_unbind_device);
 
-/* Sanity check of state transition callbacks */
-static int clockevents_sanity_check(struct clock_event_device *dev)
-{
-	/* Legacy set_mode() callback */
-	if (dev->set_mode) {
-		/* We shouldn't be supporting new modes now */
-		WARN_ON(dev->set_state_periodic || dev->set_state_oneshot ||
-			dev->set_state_shutdown || dev->tick_resume ||
-			dev->set_state_oneshot_stopped);
-
-		BUG_ON(dev->mode != CLOCK_EVT_MODE_UNUSED);
-		return 0;
-	}
-
-	if (dev->features & CLOCK_EVT_FEAT_DUMMY)
-		return 0;
-
-	return 0;
-}
-
 /**
  * clockevents_register_device - register a clock event device
  * @dev:	device to register
@@ -487,8 +449,6 @@ static int clockevents_sanity_check(struct clock_event_device *dev)
 void clockevents_register_device(struct clock_event_device *dev)
 {
 	unsigned long flags;
-
-	BUG_ON(clockevents_sanity_check(dev));
 
 	/* Initialize state to DETACHED */
 	clockevent_set_state(dev, CLOCK_EVT_STATE_DETACHED);
@@ -685,7 +645,7 @@ void tick_cleanup_dead_cpu(int cpu)
 #endif
 
 #ifdef CONFIG_SYSFS
-struct bus_type clockevents_subsys = {
+static struct bus_type clockevents_subsys = {
 	.name		= "clockevents",
 	.dev_name       = "clockevent",
 };

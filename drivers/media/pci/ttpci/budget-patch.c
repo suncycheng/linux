@@ -27,7 +27,7 @@
  * Or, point your browser to http://www.gnu.org/copyleft/gpl.html
  *
  *
- * the project's page is at http://www.linuxtv.org/ 
+ * the project's page is at https://linuxtv.org
  */
 
 #include "av7110.h"
@@ -679,5 +679,4 @@ module_exit(budget_patch_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Emard, Roberto Deza, Holger Waechtler, Michael Hunold, others");
-MODULE_DESCRIPTION("Driver for full TS modified DVB-S SAA7146+AV7110 "
-		   "based so-called Budget Patch cards");
+MODULE_DESCRIPTION("Driver for full TS modified DVB-S SAA7146+AV7110 based so-called Budget Patch cards");

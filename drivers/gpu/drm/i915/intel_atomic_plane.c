@@ -55,7 +55,8 @@ intel_create_plane_state(struct drm_plane *plane)
 		return NULL;
 
 	state->base.plane = plane;
-	state->base.rotation = BIT(DRM_ROTATE_0);
+	state->base.rotation = DRM_ROTATE_0;
+	state->ckey.flags = I915_SET_COLORKEY_NONE;
 
 	return state;
 }
@@ -75,11 +76,7 @@ intel_plane_duplicate_state(struct drm_plane *plane)
 	struct drm_plane_state *state;
 	struct intel_plane_state *intel_state;
 
-	if (WARN_ON(!plane->state))
-		intel_state = intel_create_plane_state(plane);
-	else
-		intel_state = kmemdup(plane->state, sizeof(*intel_state),
-				      GFP_KERNEL);
+	intel_state = kmemdup(plane->state, sizeof(*intel_state), GFP_KERNEL);
 
 	if (!intel_state)
 		return NULL;
@@ -109,13 +106,16 @@ intel_plane_destroy_state(struct drm_plane *plane,
 static int intel_plane_atomic_check(struct drm_plane *plane,
 				    struct drm_plane_state *state)
 {
+	struct drm_i915_private *dev_priv = to_i915(plane->dev);
 	struct drm_crtc *crtc = state->crtc;
 	struct intel_crtc *intel_crtc;
 	struct intel_crtc_state *crtc_state;
 	struct intel_plane *intel_plane = to_intel_plane(plane);
 	struct intel_plane_state *intel_state = to_intel_plane_state(state);
+	struct drm_crtc_state *drm_crtc_state;
+	int ret;
 
-	crtc = crtc ? crtc : plane->crtc;
+	crtc = crtc ? crtc : plane->state->crtc;
 	intel_crtc = to_intel_crtc(crtc);
 
 	/*
@@ -127,56 +127,25 @@ static int intel_plane_atomic_check(struct drm_plane *plane,
 	if (!crtc)
 		return 0;
 
-	/* FIXME: temporary hack necessary while we still use the plane update
-	 * helper. */
-	if (state->state) {
-		crtc_state =
-			intel_atomic_get_crtc_state(state->state, intel_crtc);
-		if (IS_ERR(crtc_state))
-			return PTR_ERR(crtc_state);
-	} else {
-		crtc_state = intel_crtc->config;
-	}
+	drm_crtc_state = drm_atomic_get_existing_crtc_state(state->state, crtc);
+	if (WARN_ON(!drm_crtc_state))
+		return -EINVAL;
 
-	/*
-	 * The original src/dest coordinates are stored in state->base, but
-	 * we want to keep another copy internal to our driver that we can
-	 * clip/modify ourselves.
-	 */
-	intel_state->src.x1 = state->src_x;
-	intel_state->src.y1 = state->src_y;
-	intel_state->src.x2 = state->src_x + state->src_w;
-	intel_state->src.y2 = state->src_y + state->src_h;
-	intel_state->dst.x1 = state->crtc_x;
-	intel_state->dst.y1 = state->crtc_y;
-	intel_state->dst.x2 = state->crtc_x + state->crtc_w;
-	intel_state->dst.y2 = state->crtc_y + state->crtc_h;
+	crtc_state = to_intel_crtc_state(drm_crtc_state);
 
 	/* Clip all planes to CRTC size, or 0x0 if CRTC is disabled */
 	intel_state->clip.x1 = 0;
 	intel_state->clip.y1 = 0;
 	intel_state->clip.x2 =
-		crtc_state->base.active ? crtc_state->pipe_src_w : 0;
+		crtc_state->base.enable ? crtc_state->pipe_src_w : 0;
 	intel_state->clip.y2 =
-		crtc_state->base.active ? crtc_state->pipe_src_h : 0;
+		crtc_state->base.enable ? crtc_state->pipe_src_h : 0;
 
-	/*
-	 * Disabling a plane is always okay; we just need to update
-	 * fb tracking in a special way since cleanup_fb() won't
-	 * get called by the plane helpers.
-	 */
-	if (state->fb == NULL && plane->state->fb != NULL) {
-		/*
-		 * 'prepare' is never called when plane is being disabled, so
-		 * we need to handle frontbuffer tracking as a special case
-		 */
-		intel_crtc->atomic.disabled_planes |=
-			(1 << drm_plane_index(plane));
-	}
+	if (state->fb && drm_rotation_90_or_270(state->rotation)) {
+		struct drm_format_name_buf format_name;
 
-	if (state->fb && intel_rotation_90_or_270(state->rotation)) {
-		if (!(state->fb->modifier[0] == I915_FORMAT_MOD_Y_TILED ||
-			state->fb->modifier[0] == I915_FORMAT_MOD_Yf_TILED)) {
+		if (state->fb->modifier != I915_FORMAT_MOD_Y_TILED &&
+		    state->fb->modifier != I915_FORMAT_MOD_Yf_TILED) {
 			DRM_DEBUG_KMS("Y/Yf tiling required for 90/270!\n");
 			return -EINVAL;
 		}
@@ -190,7 +159,8 @@ static int intel_plane_atomic_check(struct drm_plane *plane,
 		case DRM_FORMAT_C8:
 		case DRM_FORMAT_RGB565:
 			DRM_DEBUG_KMS("Unsupported pixel format %s for 90/270!\n",
-					drm_get_format_name(state->fb->pixel_format));
+			              drm_get_format_name(state->fb->pixel_format,
+			                                  &format_name));
 			return -EINVAL;
 
 		default:
@@ -198,7 +168,20 @@ static int intel_plane_atomic_check(struct drm_plane *plane,
 		}
 	}
 
-	return intel_plane->check_plane(plane, intel_state);
+	/* CHV ignores the mirror bit when the rotate bit is set :( */
+	if (IS_CHERRYVIEW(dev_priv) &&
+	    state->rotation & DRM_ROTATE_180 &&
+	    state->rotation & DRM_REFLECT_X) {
+		DRM_DEBUG_KMS("Cannot rotate and reflect at the same time\n");
+		return -EINVAL;
+	}
+
+	intel_state->base.visible = false;
+	ret = intel_plane->check_plane(plane, crtc_state, intel_state);
+	if (ret)
+		return ret;
+
+	return intel_plane_atomic_calc_changes(&crtc_state->base, state);
 }
 
 static void intel_plane_atomic_update(struct drm_plane *plane,
@@ -207,8 +190,14 @@ static void intel_plane_atomic_update(struct drm_plane *plane,
 	struct intel_plane *intel_plane = to_intel_plane(plane);
 	struct intel_plane_state *intel_state =
 		to_intel_plane_state(plane->state);
+	struct drm_crtc *crtc = plane->state->crtc ?: old_state->crtc;
 
-	intel_plane->commit_plane(plane, intel_state);
+	if (intel_state->base.visible)
+		intel_plane->update_plane(plane,
+					  to_intel_crtc_state(crtc->state),
+					  intel_state);
+	else
+		intel_plane->disable_plane(plane, crtc);
 }
 
 const struct drm_plane_helper_funcs intel_plane_helper_funcs = {

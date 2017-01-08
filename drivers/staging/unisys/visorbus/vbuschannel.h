@@ -1,10 +1,9 @@
-/* Copyright (C) 2010 - 2013 UNISYS CORPORATION
+/* Copyright (C) 2010 - 2015 UNISYS CORPORATION
  * All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or (at
- * your option) any later version.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -24,7 +23,7 @@
  *  the client devices and client drivers for the server end to see.
  */
 #include <linux/uuid.h>
-#include "vbusdeviceinfo.h"
+#include <linux/ctype.h>
 #include "channel.h"
 
 /* {193b331b-c58f-11da-95a9-00e08161165f} */
@@ -37,10 +36,11 @@ static const uuid_le spar_vbus_channel_protocol_uuid =
 #define SPAR_VBUS_CHANNEL_PROTOCOL_SIGNATURE ULTRA_CHANNEL_PROTOCOL_SIGNATURE
 
 /* Must increment this whenever you insert or delete fields within this channel
-* struct.  Also increment whenever you change the meaning of fields within this
-* channel struct so as to break pre-existing software.  Note that you can
-* usually add fields to the END of the channel struct withOUT needing to
-* increment this. */
+ * struct.  Also increment whenever you change the meaning of fields within this
+ * channel struct so as to break pre-existing software.  Note that you can
+ * usually add fields to the END of the channel struct withOUT needing to
+ * increment this.
+ */
 #define SPAR_VBUS_CHANNEL_PROTOCOL_VERSIONID 1
 
 #define SPAR_VBUS_CHANNEL_OK_CLIENT(ch)       \
@@ -51,13 +51,56 @@ static const uuid_le spar_vbus_channel_protocol_uuid =
 				   SPAR_VBUS_CHANNEL_PROTOCOL_VERSIONID, \
 				   SPAR_VBUS_CHANNEL_PROTOCOL_SIGNATURE)
 
-#define SPAR_VBUS_CHANNEL_OK_SERVER(actual_bytes)    \
-	(spar_check_channel_server(spar_vbus_channel_protocol_uuid,	\
-				   "vbus",				\
-				   sizeof(struct spar_vbus_channel_protocol),\
-				   actual_bytes))
-
 #pragma pack(push, 1)		/* both GCC and VC now allow this pragma */
+
+/*
+ * An array of this struct is present in the channel area for each vbus.
+ * (See vbuschannel.h.)
+ * It is filled in by the client side to provide info about the device
+ * and driver from the client's perspective.
+ */
+struct ultra_vbus_deviceinfo {
+	u8 devtype[16];		/* short string identifying the device type */
+	u8 drvname[16];		/* driver .sys file name */
+	u8 infostrs[96];	/* kernel version */
+	u8 reserved[128];	/* pad size to 256 bytes */
+};
+
+/**
+ * vbuschannel_print_devinfo() - format a struct ultra_vbus_deviceinfo
+ *                               and write it to a seq_file
+ * @devinfo: the struct ultra_vbus_deviceinfo to format
+ * @seq: seq_file to write to
+ * @devix: the device index to be included in the output data, or -1 if no
+ *         device index is to be included
+ *
+ * Reads @devInfo, and writes it in human-readable notation to @seq.
+ */
+static inline void
+vbuschannel_print_devinfo(struct ultra_vbus_deviceinfo *devinfo,
+			  struct seq_file *seq, int devix)
+{
+	if (!isprint(devinfo->devtype[0]))
+		return; /* uninitialized vbus device entry */
+
+	if (devix >= 0)
+		seq_printf(seq, "[%d]", devix);
+	else
+		/* vbus device entry is for bus or chipset */
+		seq_puts(seq, "   ");
+
+	/*
+	 * Note: because the s-Par back-end is free to scribble in this area,
+	 * we never assume '\0'-termination.
+	 */
+	seq_printf(seq, "%-*.*s ", (int)sizeof(devinfo->devtype),
+		   (int)sizeof(devinfo->devtype), devinfo->devtype);
+	seq_printf(seq, "%-*.*s ", (int)sizeof(devinfo->drvname),
+		   (int)sizeof(devinfo->drvname), devinfo->drvname);
+	seq_printf(seq, "%.*s\n", (int)sizeof(devinfo->infostrs),
+		   devinfo->infostrs);
+}
+
 struct spar_vbus_headerinfo {
 	u32 struct_bytes;	/* size of this struct in bytes */
 	u32 device_info_struct_bytes;	/* sizeof(ULTRA_VBUS_DEVICEINFO) */
@@ -83,11 +126,6 @@ struct spar_vbus_channel_protocol {
 	struct ultra_vbus_deviceinfo dev_info[0];
 	/* describes client device and driver for each device on the bus */
 };
-
-#define VBUS_CH_SIZE_EXACT(MAXDEVICES) \
-	(sizeof(ULTRA_VBUS_CHANNEL_PROTOCOL) + ((MAXDEVICES) * \
-						sizeof(ULTRA_VBUS_DEVICEINFO)))
-#define VBUS_CH_SIZE(MAXDEVICES) COVER(VBUS_CH_SIZE_EXACT(MAXDEVICES), 4096)
 
 #pragma pack(pop)
 

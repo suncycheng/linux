@@ -518,10 +518,10 @@ static int p9_check_errors(struct p9_client *c, struct p9_req_t *req)
 		if (err)
 			goto out_err;
 
-		if (p9_is_proto_dotu(c))
+		if (p9_is_proto_dotu(c) && ecode < 512)
 			err = -ecode;
 
-		if (!err || !IS_ERR_VALUE(err)) {
+		if (!err) {
 			err = p9_errstr2errno(ename, strlen(ename));
 
 			p9_debug(P9_DEBUG_9P, "<<< RERROR (%d) %s\n",
@@ -605,10 +605,10 @@ static int p9_check_zc_errors(struct p9_client *c, struct p9_req_t *req,
 		if (err)
 			goto out_err;
 
-		if (p9_is_proto_dotu(c))
+		if (p9_is_proto_dotu(c) && ecode < 512)
 			err = -ecode;
 
-		if (!err || !IS_ERR_VALUE(err)) {
+		if (!err) {
 			err = p9_errstr2errno(ename, strlen(ename));
 
 			p9_debug(P9_DEBUG_9P, "<<< RERROR (%d) %s\n",
@@ -1541,6 +1541,7 @@ p9_client_read(struct p9_fid *fid, u64 offset, struct iov_iter *to, int *err)
 	struct p9_client *clnt = fid->clnt;
 	struct p9_req_t *req;
 	int total = 0;
+	*err = 0;
 
 	p9_debug(P9_DEBUG_9P, ">>> TREAD fid %d offset %llu %d\n",
 		   fid->fid, (unsigned long long) offset, (int)iov_iter_count(to));
@@ -1620,6 +1621,7 @@ p9_client_write(struct p9_fid *fid, u64 offset, struct iov_iter *from, int *err)
 	struct p9_client *clnt = fid->clnt;
 	struct p9_req_t *req;
 	int total = 0;
+	*err = 0;
 
 	p9_debug(P9_DEBUG_9P, ">>> TWRITE fid %d offset %llu count %zd\n",
 				fid->fid, (unsigned long long) offset,

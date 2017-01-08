@@ -35,7 +35,7 @@
 #define HCIUARTGETFLAGS		_IOR('U', 204, int)
 
 /* UART protocols */
-#define HCI_UART_MAX_PROTO	8
+#define HCI_UART_MAX_PROTO	12
 
 #define HCI_UART_H4	0
 #define HCI_UART_BCSP	1
@@ -45,6 +45,10 @@
 #define HCI_UART_ATH3K	5
 #define HCI_UART_INTEL	6
 #define HCI_UART_BCM	7
+#define HCI_UART_QCA	8
+#define HCI_UART_AG6XX	9
+#define HCI_UART_NOKIA	10
+#define HCI_UART_MRVL	11
 
 #define HCI_UART_RAW_DEVICE	0
 #define HCI_UART_RESET_ON_INIT	1
@@ -58,6 +62,7 @@ struct hci_uart;
 struct hci_uart_proto {
 	unsigned int id;
 	const char *name;
+	unsigned int manufacturer;
 	unsigned int init_speed;
 	unsigned int oper_speed;
 	int (*open)(struct hci_uart *hu);
@@ -84,7 +89,6 @@ struct hci_uart {
 
 	struct sk_buff		*tx_skb;
 	unsigned long		tx_state;
-	spinlock_t		rx_lock;
 
 	unsigned int init_speed;
 	unsigned int oper_speed;
@@ -93,6 +97,7 @@ struct hci_uart {
 /* HCI_UART proto flag bits */
 #define HCI_UART_PROTO_SET	0
 #define HCI_UART_REGISTERED	1
+#define HCI_UART_PROTO_READY	2
 
 /* TX states  */
 #define HCI_UART_SENDING	1
@@ -167,7 +172,27 @@ int h5_init(void);
 int h5_deinit(void);
 #endif
 
+#ifdef CONFIG_BT_HCIUART_INTEL
+int intel_init(void);
+int intel_deinit(void);
+#endif
+
 #ifdef CONFIG_BT_HCIUART_BCM
 int bcm_init(void);
 int bcm_deinit(void);
+#endif
+
+#ifdef CONFIG_BT_HCIUART_QCA
+int qca_init(void);
+int qca_deinit(void);
+#endif
+
+#ifdef CONFIG_BT_HCIUART_AG6XX
+int ag6xx_init(void);
+int ag6xx_deinit(void);
+#endif
+
+#ifdef CONFIG_BT_HCIUART_MRVL
+int mrvl_init(void);
+int mrvl_deinit(void);
 #endif

@@ -8,7 +8,7 @@
  * Copyright (C) 2008 Silicon Graphics, Inc. All rights reserved.
  */
 
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/rbtree.h>
 #include <linux/slab.h>
 #include <linux/irq.h>
@@ -89,7 +89,7 @@ static int uv_domain_alloc(struct irq_domain *domain, unsigned int virq,
 		return -EINVAL;
 
 	chip_data = kmalloc_node(sizeof(*chip_data), GFP_KERNEL,
-				 irq_data->node);
+				 irq_data_get_node(irq_data));
 	if (!chip_data)
 		return -ENOMEM;
 

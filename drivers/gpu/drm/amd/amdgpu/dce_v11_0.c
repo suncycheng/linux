@@ -31,6 +31,7 @@
 #include "atombios_encoders.h"
 #include "amdgpu_pll.h"
 #include "amdgpu_connectors.h"
+#include "dce_v11_0.h"
 
 #include "dce/dce_11_0_d.h"
 #include "dce/dce_11_0_sh_mask.h"
@@ -126,6 +127,29 @@ static const u32 cz_mgcg_cgcg_init[] =
 	mmXDMA_MEM_POWER_CNTL, 0x00000101, 0x00000000,
 };
 
+static const u32 stoney_golden_settings_a11[] =
+{
+	mmCRTC_DOUBLE_BUFFER_CONTROL, 0x00010101, 0x00010000,
+	mmFBC_MISC, 0x1f311fff, 0x14302000,
+};
+
+static const u32 polaris11_golden_settings_a11[] =
+{
+	mmDCI_CLK_CNTL, 0x00000080, 0x00000000,
+	mmFBC_DEBUG_COMP, 0x000000f0, 0x00000070,
+	mmFBC_DEBUG1, 0xffffffff, 0x00000008,
+	mmFBC_MISC, 0x9f313fff, 0x14302008,
+	mmHDMI_CONTROL, 0x313f031f, 0x00000011,
+};
+
+static const u32 polaris10_golden_settings_a11[] =
+{
+	mmDCI_CLK_CNTL, 0x00000080, 0x00000000,
+	mmFBC_DEBUG_COMP, 0x000000f0, 0x00000070,
+	mmFBC_MISC, 0x9f313fff, 0x14302008,
+	mmHDMI_CONTROL, 0x313f031f, 0x00000011,
+};
+
 static void dce_v11_0_init_golden_registers(struct amdgpu_device *adev)
 {
 	switch (adev->asic_type) {
@@ -136,6 +160,21 @@ static void dce_v11_0_init_golden_registers(struct amdgpu_device *adev)
 		amdgpu_program_register_sequence(adev,
 						 cz_golden_settings_a11,
 						 (const u32)ARRAY_SIZE(cz_golden_settings_a11));
+		break;
+	case CHIP_STONEY:
+		amdgpu_program_register_sequence(adev,
+						 stoney_golden_settings_a11,
+						 (const u32)ARRAY_SIZE(stoney_golden_settings_a11));
+		break;
+	case CHIP_POLARIS11:
+		amdgpu_program_register_sequence(adev,
+						 polaris11_golden_settings_a11,
+						 (const u32)ARRAY_SIZE(polaris11_golden_settings_a11));
+		break;
+	case CHIP_POLARIS10:
+		amdgpu_program_register_sequence(adev,
+						 polaris10_golden_settings_a11,
+						 (const u32)ARRAY_SIZE(polaris10_golden_settings_a11));
 		break;
 	default:
 		break;
@@ -199,9 +238,9 @@ static bool dce_v11_0_is_counter_moving(struct amdgpu_device *adev, int crtc)
  */
 static void dce_v11_0_vblank_wait(struct amdgpu_device *adev, int crtc)
 {
-	unsigned i = 0;
+	unsigned i = 100;
 
-	if (crtc >= adev->mode_info.num_crtc)
+	if (crtc < 0 || crtc >= adev->mode_info.num_crtc)
 		return;
 
 	if (!(RREG32(mmCRTC_CONTROL + crtc_offsets[crtc]) & CRTC_CONTROL__CRTC_MASTER_EN_MASK))
@@ -211,14 +250,16 @@ static void dce_v11_0_vblank_wait(struct amdgpu_device *adev, int crtc)
 	 * wait for another frame.
 	 */
 	while (dce_v11_0_is_in_vblank(adev, crtc)) {
-		if (i++ % 100 == 0) {
+		if (i++ == 100) {
+			i = 0;
 			if (!dce_v11_0_is_counter_moving(adev, crtc))
 				break;
 		}
 	}
 
 	while (!dce_v11_0_is_in_vblank(adev, crtc)) {
-		if (i++ % 100 == 0) {
+		if (i++ == 100) {
+			i = 0;
 			if (!dce_v11_0_is_counter_moving(adev, crtc))
 				break;
 		}
@@ -227,10 +268,28 @@ static void dce_v11_0_vblank_wait(struct amdgpu_device *adev, int crtc)
 
 static u32 dce_v11_0_vblank_get_counter(struct amdgpu_device *adev, int crtc)
 {
-	if (crtc >= adev->mode_info.num_crtc)
+	if (crtc < 0 || crtc >= adev->mode_info.num_crtc)
 		return 0;
 	else
 		return RREG32(mmCRTC_STATUS_FRAME_COUNT + crtc_offsets[crtc]);
+}
+
+static void dce_v11_0_pageflip_interrupt_init(struct amdgpu_device *adev)
+{
+	unsigned i;
+
+	/* Enable pflip interrupts */
+	for (i = 0; i < adev->mode_info.num_crtc; i++)
+		amdgpu_irq_get(adev, &adev->pageflip_irq, i);
+}
+
+static void dce_v11_0_pageflip_interrupt_fini(struct amdgpu_device *adev)
+{
+	unsigned i;
+
+	/* Disable pflip interrupts */
+	for (i = 0; i < adev->mode_info.num_crtc; i++)
+		amdgpu_irq_put(adev, &adev->pageflip_irq, i);
 }
 
 /**
@@ -240,46 +299,28 @@ static u32 dce_v11_0_vblank_get_counter(struct amdgpu_device *adev, int crtc)
  * @crtc_id: crtc to cleanup pageflip on
  * @crtc_base: new address of the crtc (GPU MC address)
  *
- * Does the actual pageflip (evergreen+).
- * During vblank we take the crtc lock and wait for the update_pending
- * bit to go high, when it does, we release the lock, and allow the
- * double buffered update to take place.
- * Returns the current update pending status.
+ * Triggers the actual pageflip by updating the primary
+ * surface base address.
  */
 static void dce_v11_0_page_flip(struct amdgpu_device *adev,
-			      int crtc_id, u64 crtc_base)
+				int crtc_id, u64 crtc_base, bool async)
 {
 	struct amdgpu_crtc *amdgpu_crtc = adev->mode_info.crtcs[crtc_id];
-	u32 tmp = RREG32(mmGRPH_UPDATE + amdgpu_crtc->crtc_offset);
-	int i;
+	u32 tmp;
 
-	/* Lock the graphics update lock */
-	tmp = REG_SET_FIELD(tmp, GRPH_UPDATE, GRPH_UPDATE_LOCK, 1);
-	WREG32(mmGRPH_UPDATE + amdgpu_crtc->crtc_offset, tmp);
-
+	/* flip immediate for async, default is vsync */
+	tmp = RREG32(mmGRPH_FLIP_CONTROL + amdgpu_crtc->crtc_offset);
+	tmp = REG_SET_FIELD(tmp, GRPH_FLIP_CONTROL,
+			    GRPH_SURFACE_UPDATE_IMMEDIATE_EN, async ? 1 : 0);
+	WREG32(mmGRPH_FLIP_CONTROL + amdgpu_crtc->crtc_offset, tmp);
 	/* update the scanout addresses */
-	WREG32(mmGRPH_SECONDARY_SURFACE_ADDRESS_HIGH + amdgpu_crtc->crtc_offset,
-	       upper_32_bits(crtc_base));
-	WREG32(mmGRPH_SECONDARY_SURFACE_ADDRESS + amdgpu_crtc->crtc_offset,
-	       lower_32_bits(crtc_base));
-
 	WREG32(mmGRPH_PRIMARY_SURFACE_ADDRESS_HIGH + amdgpu_crtc->crtc_offset,
 	       upper_32_bits(crtc_base));
+	/* writing to the low address triggers the update */
 	WREG32(mmGRPH_PRIMARY_SURFACE_ADDRESS + amdgpu_crtc->crtc_offset,
 	       lower_32_bits(crtc_base));
-
-	/* Wait for update_pending to go high. */
-	for (i = 0; i < adev->usec_timeout; i++) {
-		if (RREG32(mmGRPH_UPDATE + amdgpu_crtc->crtc_offset) &
-				GRPH_UPDATE__GRPH_SURFACE_UPDATE_PENDING_MASK)
-			break;
-		udelay(1);
-	}
-	DRM_DEBUG("Update pending now high. Unlocking vupdate_lock.\n");
-
-	/* Unlock the lock, so double-buffering can take place inside vblank */
-	tmp = REG_SET_FIELD(tmp, GRPH_UPDATE, GRPH_UPDATE_LOCK, 0);
-	WREG32(mmGRPH_UPDATE + amdgpu_crtc->crtc_offset, tmp);	
+	/* post the write */
+	RREG32(mmGRPH_PRIMARY_SURFACE_ADDRESS + amdgpu_crtc->crtc_offset);
 }
 
 static int dce_v11_0_crtc_get_scanoutpos(struct amdgpu_device *adev, int crtc,
@@ -306,33 +347,12 @@ static int dce_v11_0_crtc_get_scanoutpos(struct amdgpu_device *adev, int crtc,
 static bool dce_v11_0_hpd_sense(struct amdgpu_device *adev,
 			       enum amdgpu_hpd_id hpd)
 {
-	int idx;
 	bool connected = false;
 
-	switch (hpd) {
-	case AMDGPU_HPD_1:
-		idx = 0;
-		break;
-	case AMDGPU_HPD_2:
-		idx = 1;
-		break;
-	case AMDGPU_HPD_3:
-		idx = 2;
-		break;
-	case AMDGPU_HPD_4:
-		idx = 3;
-		break;
-	case AMDGPU_HPD_5:
-		idx = 4;
-		break;
-	case AMDGPU_HPD_6:
-		idx = 5;
-		break;
-	default:
+	if (hpd >= adev->mode_info.num_hpd)
 		return connected;
-	}
 
-	if (RREG32(mmDC_HPD_INT_STATUS + hpd_offsets[idx]) &
+	if (RREG32(mmDC_HPD_INT_STATUS + hpd_offsets[hpd]) &
 	    DC_HPD_INT_STATUS__DC_HPD_SENSE_MASK)
 		connected = true;
 
@@ -352,37 +372,16 @@ static void dce_v11_0_hpd_set_polarity(struct amdgpu_device *adev,
 {
 	u32 tmp;
 	bool connected = dce_v11_0_hpd_sense(adev, hpd);
-	int idx;
 
-	switch (hpd) {
-	case AMDGPU_HPD_1:
-		idx = 0;
-		break;
-	case AMDGPU_HPD_2:
-		idx = 1;
-		break;
-	case AMDGPU_HPD_3:
-		idx = 2;
-		break;
-	case AMDGPU_HPD_4:
-		idx = 3;
-		break;
-	case AMDGPU_HPD_5:
-		idx = 4;
-		break;
-	case AMDGPU_HPD_6:
-		idx = 5;
-		break;
-	default:
+	if (hpd >= adev->mode_info.num_hpd)
 		return;
-	}
 
-	tmp = RREG32(mmDC_HPD_INT_CONTROL + hpd_offsets[idx]);
+	tmp = RREG32(mmDC_HPD_INT_CONTROL + hpd_offsets[hpd]);
 	if (connected)
 		tmp = REG_SET_FIELD(tmp, DC_HPD_INT_CONTROL, DC_HPD_INT_POLARITY, 0);
 	else
 		tmp = REG_SET_FIELD(tmp, DC_HPD_INT_CONTROL, DC_HPD_INT_POLARITY, 1);
-	WREG32(mmDC_HPD_INT_CONTROL + hpd_offsets[idx], tmp);
+	WREG32(mmDC_HPD_INT_CONTROL + hpd_offsets[hpd], tmp);
 }
 
 /**
@@ -398,10 +397,12 @@ static void dce_v11_0_hpd_init(struct amdgpu_device *adev)
 	struct drm_device *dev = adev->ddev;
 	struct drm_connector *connector;
 	u32 tmp;
-	int idx;
 
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
 		struct amdgpu_connector *amdgpu_connector = to_amdgpu_connector(connector);
+
+		if (amdgpu_connector->hpd.hpd >= adev->mode_info.num_hpd)
+			continue;
 
 		if (connector->connector_type == DRM_MODE_CONNECTOR_eDP ||
 		    connector->connector_type == DRM_MODE_CONNECTOR_LVDS) {
@@ -410,44 +411,24 @@ static void dce_v11_0_hpd_init(struct amdgpu_device *adev)
 			 * https://bugzilla.redhat.com/show_bug.cgi?id=726143
 			 * also avoid interrupt storms during dpms.
 			 */
+			tmp = RREG32(mmDC_HPD_INT_CONTROL + hpd_offsets[amdgpu_connector->hpd.hpd]);
+			tmp = REG_SET_FIELD(tmp, DC_HPD_INT_CONTROL, DC_HPD_INT_EN, 0);
+			WREG32(mmDC_HPD_INT_CONTROL + hpd_offsets[amdgpu_connector->hpd.hpd], tmp);
 			continue;
 		}
 
-		switch (amdgpu_connector->hpd.hpd) {
-		case AMDGPU_HPD_1:
-			idx = 0;
-			break;
-		case AMDGPU_HPD_2:
-			idx = 1;
-			break;
-		case AMDGPU_HPD_3:
-			idx = 2;
-			break;
-		case AMDGPU_HPD_4:
-			idx = 3;
-			break;
-		case AMDGPU_HPD_5:
-			idx = 4;
-			break;
-		case AMDGPU_HPD_6:
-			idx = 5;
-			break;
-		default:
-			continue;
-		}
-
-		tmp = RREG32(mmDC_HPD_CONTROL + hpd_offsets[idx]);
+		tmp = RREG32(mmDC_HPD_CONTROL + hpd_offsets[amdgpu_connector->hpd.hpd]);
 		tmp = REG_SET_FIELD(tmp, DC_HPD_CONTROL, DC_HPD_EN, 1);
-		WREG32(mmDC_HPD_CONTROL + hpd_offsets[idx], tmp);
+		WREG32(mmDC_HPD_CONTROL + hpd_offsets[amdgpu_connector->hpd.hpd], tmp);
 
-		tmp = RREG32(mmDC_HPD_TOGGLE_FILT_CNTL + hpd_offsets[idx]);
+		tmp = RREG32(mmDC_HPD_TOGGLE_FILT_CNTL + hpd_offsets[amdgpu_connector->hpd.hpd]);
 		tmp = REG_SET_FIELD(tmp, DC_HPD_TOGGLE_FILT_CNTL,
 				    DC_HPD_CONNECT_INT_DELAY,
 				    AMDGPU_HPD_CONNECT_INT_DELAY_IN_MS);
 		tmp = REG_SET_FIELD(tmp, DC_HPD_TOGGLE_FILT_CNTL,
 				    DC_HPD_DISCONNECT_INT_DELAY,
 				    AMDGPU_HPD_DISCONNECT_INT_DELAY_IN_MS);
-		WREG32(mmDC_HPD_TOGGLE_FILT_CNTL + hpd_offsets[idx], tmp);
+		WREG32(mmDC_HPD_TOGGLE_FILT_CNTL + hpd_offsets[amdgpu_connector->hpd.hpd], tmp);
 
 		dce_v11_0_hpd_set_polarity(adev, amdgpu_connector->hpd.hpd);
 		amdgpu_irq_get(adev, &adev->hpd_irq, amdgpu_connector->hpd.hpd);
@@ -467,37 +448,16 @@ static void dce_v11_0_hpd_fini(struct amdgpu_device *adev)
 	struct drm_device *dev = adev->ddev;
 	struct drm_connector *connector;
 	u32 tmp;
-	int idx;
 
 	list_for_each_entry(connector, &dev->mode_config.connector_list, head) {
 		struct amdgpu_connector *amdgpu_connector = to_amdgpu_connector(connector);
 
-		switch (amdgpu_connector->hpd.hpd) {
-		case AMDGPU_HPD_1:
-			idx = 0;
-			break;
-		case AMDGPU_HPD_2:
-			idx = 1;
-			break;
-		case AMDGPU_HPD_3:
-			idx = 2;
-			break;
-		case AMDGPU_HPD_4:
-			idx = 3;
-			break;
-		case AMDGPU_HPD_5:
-			idx = 4;
-			break;
-		case AMDGPU_HPD_6:
-			idx = 5;
-			break;
-		default:
+		if (amdgpu_connector->hpd.hpd >= adev->mode_info.num_hpd)
 			continue;
-		}
 
-		tmp = RREG32(mmDC_HPD_CONTROL + hpd_offsets[idx]);
+		tmp = RREG32(mmDC_HPD_CONTROL + hpd_offsets[amdgpu_connector->hpd.hpd]);
 		tmp = REG_SET_FIELD(tmp, DC_HPD_CONTROL, DC_HPD_EN, 0);
-		WREG32(mmDC_HPD_CONTROL + hpd_offsets[idx], tmp);
+		WREG32(mmDC_HPD_CONTROL + hpd_offsets[amdgpu_connector->hpd.hpd], tmp);
 
 		amdgpu_irq_put(adev, &adev->hpd_irq, amdgpu_connector->hpd.hpd);
 	}
@@ -557,35 +517,14 @@ static void dce_v11_0_stop_mc_access(struct amdgpu_device *adev,
 		crtc_enabled = REG_GET_FIELD(RREG32(mmCRTC_CONTROL + crtc_offsets[i]),
 					     CRTC_CONTROL, CRTC_MASTER_EN);
 		if (crtc_enabled) {
-#if 0
-			u32 frame_count;
-			int j;
-
+#if 1
 			save->crtc_enabled[i] = true;
 			tmp = RREG32(mmCRTC_BLANK_CONTROL + crtc_offsets[i]);
 			if (REG_GET_FIELD(tmp, CRTC_BLANK_CONTROL, CRTC_BLANK_DATA_EN) == 0) {
-				amdgpu_display_vblank_wait(adev, i);
-				WREG32(mmCRTC_UPDATE_LOCK + crtc_offsets[i], 1);
+				/*it is correct only for RGB ; black is 0*/
+				WREG32(mmCRTC_BLANK_DATA_COLOR + crtc_offsets[i], 0);
 				tmp = REG_SET_FIELD(tmp, CRTC_BLANK_CONTROL, CRTC_BLANK_DATA_EN, 1);
 				WREG32(mmCRTC_BLANK_CONTROL + crtc_offsets[i], tmp);
-				WREG32(mmCRTC_UPDATE_LOCK + crtc_offsets[i], 0);
-			}
-			/* wait for the next frame */
-			frame_count = amdgpu_display_vblank_get_counter(adev, i);
-			for (j = 0; j < adev->usec_timeout; j++) {
-				if (amdgpu_display_vblank_get_counter(adev, i) != frame_count)
-					break;
-				udelay(1);
-			}
-			tmp = RREG32(mmGRPH_UPDATE + crtc_offsets[i]);
-			if (REG_GET_FIELD(tmp, GRPH_UPDATE, GRPH_UPDATE_LOCK) == 0) {
-				tmp = REG_SET_FIELD(tmp, GRPH_UPDATE, GRPH_UPDATE_LOCK, 1);
-				WREG32(mmGRPH_UPDATE + crtc_offsets[i], tmp);
-			}
-			tmp = RREG32(mmCRTC_MASTER_UPDATE_LOCK + crtc_offsets[i]);
-			if (REG_GET_FIELD(tmp, CRTC_MASTER_UPDATE_LOCK, MASTER_UPDATE_LOCK) == 0) {
-				tmp = REG_SET_FIELD(tmp, CRTC_MASTER_UPDATE_LOCK, MASTER_UPDATE_LOCK, 1);
-				WREG32(mmCRTC_MASTER_UPDATE_LOCK + crtc_offsets[i], tmp);
 			}
 #else
 			/* XXX this is a hack to avoid strange behavior with EFI on certain systems */
@@ -606,54 +545,20 @@ static void dce_v11_0_stop_mc_access(struct amdgpu_device *adev,
 static void dce_v11_0_resume_mc_access(struct amdgpu_device *adev,
 				       struct amdgpu_mode_mc_save *save)
 {
-	u32 tmp, frame_count;
-	int i, j;
+	u32 tmp;
+	int i;
 
 	/* update crtc base addresses */
 	for (i = 0; i < adev->mode_info.num_crtc; i++) {
 		WREG32(mmGRPH_PRIMARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i],
 		       upper_32_bits(adev->mc.vram_start));
-		WREG32(mmGRPH_SECONDARY_SURFACE_ADDRESS_HIGH + crtc_offsets[i],
-		       upper_32_bits(adev->mc.vram_start));
 		WREG32(mmGRPH_PRIMARY_SURFACE_ADDRESS + crtc_offsets[i],
-		       (u32)adev->mc.vram_start);
-		WREG32(mmGRPH_SECONDARY_SURFACE_ADDRESS + crtc_offsets[i],
 		       (u32)adev->mc.vram_start);
 
 		if (save->crtc_enabled[i]) {
-			tmp = RREG32(mmCRTC_MASTER_UPDATE_MODE + crtc_offsets[i]);
-			if (REG_GET_FIELD(tmp, CRTC_MASTER_UPDATE_MODE, MASTER_UPDATE_MODE) != 3) {
-				tmp = REG_SET_FIELD(tmp, CRTC_MASTER_UPDATE_MODE, MASTER_UPDATE_MODE, 3);
-				WREG32(mmCRTC_MASTER_UPDATE_MODE + crtc_offsets[i], tmp);
-			}
-			tmp = RREG32(mmGRPH_UPDATE + crtc_offsets[i]);
-			if (REG_GET_FIELD(tmp, GRPH_UPDATE, GRPH_UPDATE_LOCK)) {
-				tmp = REG_SET_FIELD(tmp, GRPH_UPDATE, GRPH_UPDATE_LOCK, 0);
-				WREG32(mmGRPH_UPDATE + crtc_offsets[i], tmp);
-			}
-			tmp = RREG32(mmCRTC_MASTER_UPDATE_LOCK + crtc_offsets[i]);
-			if (REG_GET_FIELD(tmp, CRTC_MASTER_UPDATE_LOCK, MASTER_UPDATE_LOCK)) {
-				tmp = REG_SET_FIELD(tmp, CRTC_MASTER_UPDATE_LOCK, MASTER_UPDATE_LOCK, 0);
-				WREG32(mmCRTC_MASTER_UPDATE_LOCK + crtc_offsets[i], tmp);
-			}
-			for (j = 0; j < adev->usec_timeout; j++) {
-				tmp = RREG32(mmGRPH_UPDATE + crtc_offsets[i]);
-				if (REG_GET_FIELD(tmp, GRPH_UPDATE, GRPH_SURFACE_UPDATE_PENDING) == 0)
-					break;
-				udelay(1);
-			}
 			tmp = RREG32(mmCRTC_BLANK_CONTROL + crtc_offsets[i]);
 			tmp = REG_SET_FIELD(tmp, CRTC_BLANK_CONTROL, CRTC_BLANK_DATA_EN, 0);
-			WREG32(mmCRTC_UPDATE_LOCK + crtc_offsets[i], 1);
 			WREG32(mmCRTC_BLANK_CONTROL + crtc_offsets[i], tmp);
-			WREG32(mmCRTC_UPDATE_LOCK + crtc_offsets[i], 0);
-			/* wait for the next frame */
-			frame_count = amdgpu_display_vblank_get_counter(adev, i);
-			for (j = 0; j < adev->usec_timeout; j++) {
-				if (amdgpu_display_vblank_get_counter(adev, i) != frame_count)
-					break;
-				udelay(1);
-			}
 		}
 	}
 
@@ -686,6 +591,53 @@ static void dce_v11_0_set_vga_render_state(struct amdgpu_device *adev,
 	else
 		tmp = REG_SET_FIELD(tmp, VGA_RENDER_CONTROL, VGA_VSTATUS_CNTL, 0);
 	WREG32(mmVGA_RENDER_CONTROL, tmp);
+}
+
+static int dce_v11_0_get_num_crtc (struct amdgpu_device *adev)
+{
+	int num_crtc = 0;
+
+	switch (adev->asic_type) {
+	case CHIP_CARRIZO:
+		num_crtc = 3;
+		break;
+	case CHIP_STONEY:
+		num_crtc = 2;
+		break;
+	case CHIP_POLARIS10:
+		num_crtc = 6;
+		break;
+	case CHIP_POLARIS11:
+		num_crtc = 5;
+		break;
+	default:
+		num_crtc = 0;
+	}
+	return num_crtc;
+}
+
+void dce_v11_0_disable_dce(struct amdgpu_device *adev)
+{
+	/*Disable VGA render and enabled crtc, if has DCE engine*/
+	if (amdgpu_atombios_has_dce_engine_info(adev)) {
+		u32 tmp;
+		int crtc_enabled, i;
+
+		dce_v11_0_set_vga_render_state(adev, false);
+
+		/*Disable crtc*/
+		for (i = 0; i < dce_v11_0_get_num_crtc(adev); i++) {
+			crtc_enabled = REG_GET_FIELD(RREG32(mmCRTC_CONTROL + crtc_offsets[i]),
+									 CRTC_CONTROL, CRTC_MASTER_EN);
+			if (crtc_enabled) {
+				WREG32(mmCRTC_UPDATE_LOCK + crtc_offsets[i], 1);
+				tmp = RREG32(mmCRTC_CONTROL + crtc_offsets[i]);
+				tmp = REG_SET_FIELD(tmp, CRTC_CONTROL, CRTC_MASTER_EN, 0);
+				WREG32(mmCRTC_CONTROL + crtc_offsets[i], tmp);
+				WREG32(mmCRTC_UPDATE_LOCK + crtc_offsets[i], 0);
+			}
+		}
+	}
 }
 
 static void dce_v11_0_program_fmt(struct drm_encoder *encoder)
@@ -801,11 +753,11 @@ static u32 dce_v11_0_line_buffer_adjust(struct amdgpu_device *adev,
 			buffer_alloc = 2;
 		} else if (mode->crtc_hdisplay < 4096) {
 			mem_cfg = 0;
-			buffer_alloc = (adev->flags & AMDGPU_IS_APU) ? 2 : 4;
+			buffer_alloc = (adev->flags & AMD_IS_APU) ? 2 : 4;
 		} else {
 			DRM_DEBUG_KMS("Mode too big for LB!\n");
 			mem_cfg = 0;
-			buffer_alloc = (adev->flags & AMDGPU_IS_APU) ? 2 : 4;
+			buffer_alloc = (adev->flags & AMD_IS_APU) ? 2 : 4;
 		}
 	} else {
 		mem_cfg = 1;
@@ -1232,7 +1184,7 @@ static void dce_v11_0_program_watermarks(struct amdgpu_device *adev,
 	u32 pixel_period;
 	u32 line_time = 0;
 	u32 latency_watermark_a = 0, latency_watermark_b = 0;
-	u32 tmp, wm_mask;
+	u32 tmp, wm_mask, lb_vblank_lead_lines = 0;
 
 	if (amdgpu_crtc->base.enabled && num_heads && mode) {
 		pixel_period = 1000000 / (u32)mode->clock;
@@ -1315,6 +1267,7 @@ static void dce_v11_0_program_watermarks(struct amdgpu_device *adev,
 		    (adev->mode_info.disp_priority == 2)) {
 			DRM_DEBUG_KMS("force priority to high\n");
 		}
+		lb_vblank_lead_lines = DIV_ROUND_UP(lb_size, mode->crtc_hdisplay);
 	}
 
 	/* select wm A */
@@ -1329,7 +1282,7 @@ static void dce_v11_0_program_watermarks(struct amdgpu_device *adev,
 	tmp = REG_SET_FIELD(wm_mask, DPG_WATERMARK_MASK_CONTROL, URGENCY_WATERMARK_MASK, 2);
 	WREG32(mmDPG_WATERMARK_MASK_CONTROL + amdgpu_crtc->crtc_offset, tmp);
 	tmp = RREG32(mmDPG_PIPE_URGENCY_CONTROL + amdgpu_crtc->crtc_offset);
-	tmp = REG_SET_FIELD(tmp, DPG_PIPE_URGENCY_CONTROL, URGENCY_LOW_WATERMARK, latency_watermark_a);
+	tmp = REG_SET_FIELD(tmp, DPG_PIPE_URGENCY_CONTROL, URGENCY_LOW_WATERMARK, latency_watermark_b);
 	tmp = REG_SET_FIELD(tmp, DPG_PIPE_URGENCY_CONTROL, URGENCY_HIGH_WATERMARK, line_time);
 	WREG32(mmDPG_PIPE_URGENCY_CONTROL + amdgpu_crtc->crtc_offset, tmp);
 	/* restore original selection */
@@ -1339,6 +1292,8 @@ static void dce_v11_0_program_watermarks(struct amdgpu_device *adev,
 	amdgpu_crtc->line_time = line_time;
 	amdgpu_crtc->wm_high = latency_watermark_a;
 	amdgpu_crtc->wm_low = latency_watermark_b;
+	/* Save number of lines the linebuffer leads before the scanout */
+	amdgpu_crtc->lb_vblank_lead_lines = lb_vblank_lead_lines;
 }
 
 /**
@@ -1613,6 +1568,7 @@ static const u32 pin_offsets[] =
 	AUD4_REGISTER_OFFSET,
 	AUD5_REGISTER_OFFSET,
 	AUD6_REGISTER_OFFSET,
+	AUD7_REGISTER_OFFSET,
 };
 
 static int dce_v11_0_audio_init(struct amdgpu_device *adev)
@@ -1624,7 +1580,20 @@ static int dce_v11_0_audio_init(struct amdgpu_device *adev)
 
 	adev->mode_info.audio.enabled = true;
 
-	adev->mode_info.audio.num_pins = 7;
+	switch (adev->asic_type) {
+	case CHIP_CARRIZO:
+	case CHIP_STONEY:
+		adev->mode_info.audio.num_pins = 7;
+		break;
+	case CHIP_POLARIS10:
+		adev->mode_info.audio.num_pins = 8;
+		break;
+	case CHIP_POLARIS11:
+		adev->mode_info.audio.num_pins = 6;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	for (i = 0; i < adev->mode_info.audio.num_pins; i++) {
 		adev->mode_info.audio.pin[i].channels = -1;
@@ -1646,6 +1615,9 @@ static int dce_v11_0_audio_init(struct amdgpu_device *adev)
 static void dce_v11_0_audio_fini(struct amdgpu_device *adev)
 {
 	int i;
+
+	if (!amdgpu_audio)
+		return;
 
 	if (!adev->mode_info.audio.enabled)
 		return;
@@ -1952,7 +1924,7 @@ static void dce_v11_0_afmt_enable(struct drm_encoder *encoder, bool enable)
 		  enable ? "En" : "Dis", dig->afmt->offset, amdgpu_encoder->encoder_id);
 }
 
-static void dce_v11_0_afmt_init(struct amdgpu_device *adev)
+static int dce_v11_0_afmt_init(struct amdgpu_device *adev)
 {
 	int i;
 
@@ -1965,8 +1937,16 @@ static void dce_v11_0_afmt_init(struct amdgpu_device *adev)
 		if (adev->mode_info.afmt[i]) {
 			adev->mode_info.afmt[i]->offset = dig_offsets[i];
 			adev->mode_info.afmt[i]->id = i;
+		} else {
+			int j;
+			for (j = 0; j < i; j++) {
+				kfree(adev->mode_info.afmt[j]);
+				adev->mode_info.afmt[j] = NULL;
+			}
+			return -ENOMEM;
 		}
 	}
+	return 0;
 }
 
 static void dce_v11_0_afmt_fini(struct amdgpu_device *adev)
@@ -2025,7 +2005,7 @@ static int dce_v11_0_crtc_do_set_base(struct drm_crtc *crtc,
 	struct amdgpu_framebuffer *amdgpu_fb;
 	struct drm_framebuffer *target_fb;
 	struct drm_gem_object *obj;
-	struct amdgpu_bo *rbo;
+	struct amdgpu_bo *abo;
 	uint64_t fb_location, tiling_flags;
 	uint32_t fb_format, fb_pitch_pixels;
 	u32 fb_swap = REG_SET_FIELD(0, GRPH_SWAP_CNTL, GRPH_ENDIAN_SWAP, ENDIAN_NONE);
@@ -2033,6 +2013,7 @@ static int dce_v11_0_crtc_do_set_base(struct drm_crtc *crtc,
 	u32 tmp, viewport_w, viewport_h;
 	int r;
 	bool bypass_lut = false;
+	struct drm_format_name_buf format_name;
 
 	/* no fb bound */
 	if (!atomic && !crtc->primary->fb) {
@@ -2043,8 +2024,7 @@ static int dce_v11_0_crtc_do_set_base(struct drm_crtc *crtc,
 	if (atomic) {
 		amdgpu_fb = to_amdgpu_framebuffer(fb);
 		target_fb = fb;
-	}
-	else {
+	} else {
 		amdgpu_fb = to_amdgpu_framebuffer(crtc->primary->fb);
 		target_fb = crtc->primary->fb;
 	}
@@ -2053,23 +2033,23 @@ static int dce_v11_0_crtc_do_set_base(struct drm_crtc *crtc,
 	 * just update base pointers
 	 */
 	obj = amdgpu_fb->obj;
-	rbo = gem_to_amdgpu_bo(obj);
-	r = amdgpu_bo_reserve(rbo, false);
+	abo = gem_to_amdgpu_bo(obj);
+	r = amdgpu_bo_reserve(abo, false);
 	if (unlikely(r != 0))
 		return r;
 
-	if (atomic)
-		fb_location = amdgpu_bo_gpu_offset(rbo);
-	else {
-		r = amdgpu_bo_pin(rbo, AMDGPU_GEM_DOMAIN_VRAM, &fb_location);
+	if (atomic) {
+		fb_location = amdgpu_bo_gpu_offset(abo);
+	} else {
+		r = amdgpu_bo_pin(abo, AMDGPU_GEM_DOMAIN_VRAM, &fb_location);
 		if (unlikely(r != 0)) {
-			amdgpu_bo_unreserve(rbo);
+			amdgpu_bo_unreserve(abo);
 			return -EINVAL;
 		}
 	}
 
-	amdgpu_bo_get_tiling_flags(rbo, &tiling_flags);
-	amdgpu_bo_unreserve(rbo);
+	amdgpu_bo_get_tiling_flags(abo, &tiling_flags);
+	amdgpu_bo_unreserve(abo);
 
 	pipe_config = AMDGPU_TILING_GET(tiling_flags, PIPE_CONFIG);
 
@@ -2146,7 +2126,7 @@ static int dce_v11_0_crtc_do_set_base(struct drm_crtc *crtc,
 		break;
 	default:
 		DRM_ERROR("Unsupported screen format %s\n",
-			drm_get_format_name(target_fb->pixel_format));
+		          drm_get_format_name(target_fb->pixel_format, &format_name));
 		return -EINVAL;
 	}
 
@@ -2179,6 +2159,14 @@ static int dce_v11_0_crtc_do_set_base(struct drm_crtc *crtc,
 				  pipe_config);
 
 	dce_v11_0_vga_enable(crtc, false);
+
+	/* Make sure surface address is updated at vertical blank rather than
+	 * horizontal blank
+	 */
+	tmp = RREG32(mmGRPH_FLIP_CONTROL + amdgpu_crtc->crtc_offset);
+	tmp = REG_SET_FIELD(tmp, GRPH_FLIP_CONTROL,
+			    GRPH_SURFACE_UPDATE_H_RETRACE_EN, 0);
+	WREG32(mmGRPH_FLIP_CONTROL + amdgpu_crtc->crtc_offset, tmp);
 
 	WREG32(mmGRPH_PRIMARY_SURFACE_ADDRESS_HIGH + amdgpu_crtc->crtc_offset,
 	       upper_32_bits(fb_location));
@@ -2230,24 +2218,17 @@ static int dce_v11_0_crtc_do_set_base(struct drm_crtc *crtc,
 	WREG32(mmVIEWPORT_SIZE + amdgpu_crtc->crtc_offset,
 	       (viewport_w << 16) | viewport_h);
 
-	/* pageflip setup */
-	/* make sure flip is at vb rather than hb */
-	tmp = RREG32(mmGRPH_FLIP_CONTROL + amdgpu_crtc->crtc_offset);
-	tmp = REG_SET_FIELD(tmp, GRPH_FLIP_CONTROL,
-			    GRPH_SURFACE_UPDATE_H_RETRACE_EN, 0);
-	WREG32(mmGRPH_FLIP_CONTROL + amdgpu_crtc->crtc_offset, tmp);
-
-	/* set pageflip to happen only at start of vblank interval (front porch) */
-	WREG32(mmCRTC_MASTER_UPDATE_MODE + amdgpu_crtc->crtc_offset, 3);
+	/* set pageflip to happen anywhere in vblank interval */
+	WREG32(mmCRTC_MASTER_UPDATE_MODE + amdgpu_crtc->crtc_offset, 0);
 
 	if (!atomic && fb && fb != crtc->primary->fb) {
 		amdgpu_fb = to_amdgpu_framebuffer(fb);
-		rbo = gem_to_amdgpu_bo(amdgpu_fb->obj);
-		r = amdgpu_bo_reserve(rbo, false);
+		abo = gem_to_amdgpu_bo(amdgpu_fb->obj);
+		r = amdgpu_bo_reserve(abo, false);
 		if (unlikely(r != 0))
 			return r;
-		amdgpu_bo_unpin(rbo);
-		amdgpu_bo_unreserve(rbo);
+		amdgpu_bo_unpin(abo);
+		amdgpu_bo_unreserve(abo);
 	}
 
 	/* Bytes per pixel may have changed */
@@ -2406,6 +2387,40 @@ static u32 dce_v11_0_pick_pll(struct drm_crtc *crtc)
 	u32 pll_in_use;
 	int pll;
 
+	if ((adev->asic_type == CHIP_POLARIS10) ||
+	    (adev->asic_type == CHIP_POLARIS11)) {
+		struct amdgpu_encoder *amdgpu_encoder =
+			to_amdgpu_encoder(amdgpu_crtc->encoder);
+		struct amdgpu_encoder_atom_dig *dig = amdgpu_encoder->enc_priv;
+
+		if (ENCODER_MODE_IS_DP(amdgpu_atombios_encoder_get_encoder_mode(amdgpu_crtc->encoder)))
+			return ATOM_DP_DTO;
+
+		switch (amdgpu_encoder->encoder_id) {
+		case ENCODER_OBJECT_ID_INTERNAL_UNIPHY:
+			if (dig->linkb)
+				return ATOM_COMBOPHY_PLL1;
+			else
+				return ATOM_COMBOPHY_PLL0;
+			break;
+		case ENCODER_OBJECT_ID_INTERNAL_UNIPHY1:
+			if (dig->linkb)
+				return ATOM_COMBOPHY_PLL3;
+			else
+				return ATOM_COMBOPHY_PLL2;
+			break;
+		case ENCODER_OBJECT_ID_INTERNAL_UNIPHY2:
+			if (dig->linkb)
+				return ATOM_COMBOPHY_PLL5;
+			else
+				return ATOM_COMBOPHY_PLL4;
+			break;
+		default:
+			DRM_ERROR("invalid encoder_id: 0x%x\n", amdgpu_encoder->encoder_id);
+			return ATOM_PPLL_INVALID;
+		}
+	}
+
 	if (ENCODER_MODE_IS_DP(amdgpu_atombios_encoder_get_encoder_mode(amdgpu_crtc->encoder))) {
 		if (adev->clock.dp_extclk)
 			/* skip PPLL programming if using ext clock */
@@ -2425,7 +2440,7 @@ static u32 dce_v11_0_pick_pll(struct drm_crtc *crtc)
 
 	/* XXX need to determine what plls are available on each DCE11 part */
 	pll_in_use = amdgpu_pll_get_use_mask(crtc);
-	if (adev->asic_type == CHIP_CARRIZO) {
+	if (adev->asic_type == CHIP_CARRIZO || adev->asic_type == CHIP_STONEY) {
 		if (!(pll_in_use & (1 << ATOM_PPLL1)))
 			return ATOM_PPLL1;
 		if (!(pll_in_use & (1 << ATOM_PPLL0)))
@@ -2476,30 +2491,26 @@ static void dce_v11_0_show_cursor(struct drm_crtc *crtc)
 	struct amdgpu_device *adev = crtc->dev->dev_private;
 	u32 tmp;
 
+	WREG32(mmCUR_SURFACE_ADDRESS_HIGH + amdgpu_crtc->crtc_offset,
+	       upper_32_bits(amdgpu_crtc->cursor_addr));
+	WREG32(mmCUR_SURFACE_ADDRESS + amdgpu_crtc->crtc_offset,
+	       lower_32_bits(amdgpu_crtc->cursor_addr));
+
 	tmp = RREG32_IDX(mmCUR_CONTROL + amdgpu_crtc->crtc_offset);
 	tmp = REG_SET_FIELD(tmp, CUR_CONTROL, CURSOR_EN, 1);
 	tmp = REG_SET_FIELD(tmp, CUR_CONTROL, CURSOR_MODE, 2);
 	WREG32_IDX(mmCUR_CONTROL + amdgpu_crtc->crtc_offset, tmp);
 }
 
-static void dce_v11_0_set_cursor(struct drm_crtc *crtc, struct drm_gem_object *obj,
-			      uint64_t gpu_addr)
-{
-	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
-	struct amdgpu_device *adev = crtc->dev->dev_private;
-
-	WREG32(mmCUR_SURFACE_ADDRESS_HIGH + amdgpu_crtc->crtc_offset,
-	       upper_32_bits(gpu_addr));
-	WREG32(mmCUR_SURFACE_ADDRESS + amdgpu_crtc->crtc_offset,
-	       lower_32_bits(gpu_addr));
-}
-
-static int dce_v11_0_crtc_cursor_move(struct drm_crtc *crtc,
-				     int x, int y)
+static int dce_v11_0_cursor_move_locked(struct drm_crtc *crtc,
+					int x, int y)
 {
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
 	struct amdgpu_device *adev = crtc->dev->dev_private;
 	int xorigin = 0, yorigin = 0;
+
+	amdgpu_crtc->cursor_x = x;
+	amdgpu_crtc->cursor_y = y;
 
 	/* avivo cursor are offset into the total surface */
 	x += crtc->x;
@@ -2515,26 +2526,36 @@ static int dce_v11_0_crtc_cursor_move(struct drm_crtc *crtc,
 		y = 0;
 	}
 
-	dce_v11_0_lock_cursor(crtc, true);
 	WREG32(mmCUR_POSITION + amdgpu_crtc->crtc_offset, (x << 16) | y);
 	WREG32(mmCUR_HOT_SPOT + amdgpu_crtc->crtc_offset, (xorigin << 16) | yorigin);
-	WREG32(mmCUR_SIZE + amdgpu_crtc->crtc_offset,
-	       ((amdgpu_crtc->cursor_width - 1) << 16) | (amdgpu_crtc->cursor_height - 1));
-	dce_v11_0_lock_cursor(crtc, false);
 
 	return 0;
 }
 
-static int dce_v11_0_crtc_cursor_set(struct drm_crtc *crtc,
-				    struct drm_file *file_priv,
-				    uint32_t handle,
-				    uint32_t width,
-				    uint32_t height)
+static int dce_v11_0_crtc_cursor_move(struct drm_crtc *crtc,
+				      int x, int y)
+{
+	int ret;
+
+	dce_v11_0_lock_cursor(crtc, true);
+	ret = dce_v11_0_cursor_move_locked(crtc, x, y);
+	dce_v11_0_lock_cursor(crtc, false);
+
+	return ret;
+}
+
+static int dce_v11_0_crtc_cursor_set2(struct drm_crtc *crtc,
+				      struct drm_file *file_priv,
+				      uint32_t handle,
+				      uint32_t width,
+				      uint32_t height,
+				      int32_t hot_x,
+				      int32_t hot_y)
 {
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
+	struct amdgpu_device *adev = crtc->dev->dev_private;
 	struct drm_gem_object *obj;
-	struct amdgpu_bo *robj;
-	uint64_t gpu_addr;
+	struct amdgpu_bo *aobj;
 	int ret;
 
 	if (!handle) {
@@ -2550,62 +2571,104 @@ static int dce_v11_0_crtc_cursor_set(struct drm_crtc *crtc,
 		return -EINVAL;
 	}
 
-	obj = drm_gem_object_lookup(crtc->dev, file_priv, handle);
+	obj = drm_gem_object_lookup(file_priv, handle);
 	if (!obj) {
 		DRM_ERROR("Cannot find cursor object %x for crtc %d\n", handle, amdgpu_crtc->crtc_id);
 		return -ENOENT;
 	}
 
-	robj = gem_to_amdgpu_bo(obj);
-	ret = amdgpu_bo_reserve(robj, false);
-	if (unlikely(ret != 0))
-		goto fail;
-	ret = amdgpu_bo_pin_restricted(robj, AMDGPU_GEM_DOMAIN_VRAM,
-				       0, 0, &gpu_addr);
-	amdgpu_bo_unreserve(robj);
-	if (ret)
-		goto fail;
+	aobj = gem_to_amdgpu_bo(obj);
+	ret = amdgpu_bo_reserve(aobj, false);
+	if (ret != 0) {
+		drm_gem_object_unreference_unlocked(obj);
+		return ret;
+	}
 
-	amdgpu_crtc->cursor_width = width;
-	amdgpu_crtc->cursor_height = height;
+	ret = amdgpu_bo_pin(aobj, AMDGPU_GEM_DOMAIN_VRAM, &amdgpu_crtc->cursor_addr);
+	amdgpu_bo_unreserve(aobj);
+	if (ret) {
+		DRM_ERROR("Failed to pin new cursor BO (%d)\n", ret);
+		drm_gem_object_unreference_unlocked(obj);
+		return ret;
+	}
 
 	dce_v11_0_lock_cursor(crtc, true);
-	dce_v11_0_set_cursor(crtc, obj, gpu_addr);
+
+	if (hot_x != amdgpu_crtc->cursor_hot_x ||
+	    hot_y != amdgpu_crtc->cursor_hot_y) {
+		int x, y;
+
+		x = amdgpu_crtc->cursor_x + amdgpu_crtc->cursor_hot_x - hot_x;
+		y = amdgpu_crtc->cursor_y + amdgpu_crtc->cursor_hot_y - hot_y;
+
+		dce_v11_0_cursor_move_locked(crtc, x, y);
+
+		amdgpu_crtc->cursor_hot_x = hot_x;
+		amdgpu_crtc->cursor_hot_y = hot_y;
+	}
+
+	if (width != amdgpu_crtc->cursor_width ||
+	    height != amdgpu_crtc->cursor_height) {
+		WREG32(mmCUR_SIZE + amdgpu_crtc->crtc_offset,
+		       (width - 1) << 16 | (height - 1));
+		amdgpu_crtc->cursor_width = width;
+		amdgpu_crtc->cursor_height = height;
+	}
+
 	dce_v11_0_show_cursor(crtc);
 	dce_v11_0_lock_cursor(crtc, false);
 
 unpin:
 	if (amdgpu_crtc->cursor_bo) {
-		robj = gem_to_amdgpu_bo(amdgpu_crtc->cursor_bo);
-		ret = amdgpu_bo_reserve(robj, false);
+		struct amdgpu_bo *aobj = gem_to_amdgpu_bo(amdgpu_crtc->cursor_bo);
+		ret = amdgpu_bo_reserve(aobj, false);
 		if (likely(ret == 0)) {
-			amdgpu_bo_unpin(robj);
-			amdgpu_bo_unreserve(robj);
+			amdgpu_bo_unpin(aobj);
+			amdgpu_bo_unreserve(aobj);
 		}
 		drm_gem_object_unreference_unlocked(amdgpu_crtc->cursor_bo);
 	}
 
 	amdgpu_crtc->cursor_bo = obj;
 	return 0;
-fail:
-	drm_gem_object_unreference_unlocked(obj);
-
-	return ret;
 }
 
-static void dce_v11_0_crtc_gamma_set(struct drm_crtc *crtc, u16 *red, u16 *green,
-				    u16 *blue, uint32_t start, uint32_t size)
+static void dce_v11_0_cursor_reset(struct drm_crtc *crtc)
 {
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
-	int end = (start + size > 256) ? 256 : start + size, i;
+	struct amdgpu_device *adev = crtc->dev->dev_private;
+
+	if (amdgpu_crtc->cursor_bo) {
+		dce_v11_0_lock_cursor(crtc, true);
+
+		dce_v11_0_cursor_move_locked(crtc, amdgpu_crtc->cursor_x,
+					     amdgpu_crtc->cursor_y);
+
+		WREG32(mmCUR_SIZE + amdgpu_crtc->crtc_offset,
+		       (amdgpu_crtc->cursor_width - 1) << 16 |
+		       (amdgpu_crtc->cursor_height - 1));
+
+		dce_v11_0_show_cursor(crtc);
+
+		dce_v11_0_lock_cursor(crtc, false);
+	}
+}
+
+static int dce_v11_0_crtc_gamma_set(struct drm_crtc *crtc, u16 *red, u16 *green,
+				    u16 *blue, uint32_t size)
+{
+	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
+	int i;
 
 	/* userspace palettes are always correct as is */
-	for (i = start; i < end; i++) {
+	for (i = 0; i < size; i++) {
 		amdgpu_crtc->lut_r[i] = red[i] >> 6;
 		amdgpu_crtc->lut_g[i] = green[i] >> 6;
 		amdgpu_crtc->lut_b[i] = blue[i] >> 6;
 	}
 	dce_v11_0_crtc_load_lut(crtc);
+
+	return 0;
 }
 
 static void dce_v11_0_crtc_destroy(struct drm_crtc *crtc)
@@ -2613,17 +2676,16 @@ static void dce_v11_0_crtc_destroy(struct drm_crtc *crtc)
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
 
 	drm_crtc_cleanup(crtc);
-	destroy_workqueue(amdgpu_crtc->pflip_queue);
 	kfree(amdgpu_crtc);
 }
 
 static const struct drm_crtc_funcs dce_v11_0_crtc_funcs = {
-	.cursor_set = dce_v11_0_crtc_cursor_set,
+	.cursor_set2 = dce_v11_0_crtc_cursor_set2,
 	.cursor_move = dce_v11_0_crtc_cursor_move,
 	.gamma_set = dce_v11_0_crtc_gamma_set,
 	.set_config = amdgpu_crtc_set_config,
 	.destroy = dce_v11_0_crtc_destroy,
-	.page_flip = amdgpu_crtc_page_flip,
+	.page_flip_target = amdgpu_crtc_page_flip_target,
 };
 
 static void dce_v11_0_crtc_dpms(struct drm_crtc *crtc, int mode)
@@ -2631,6 +2693,7 @@ static void dce_v11_0_crtc_dpms(struct drm_crtc *crtc, int mode)
 	struct drm_device *dev = crtc->dev;
 	struct amdgpu_device *adev = dev->dev_private;
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
+	unsigned type;
 
 	switch (mode) {
 	case DRM_MODE_DPMS_ON:
@@ -2639,13 +2702,17 @@ static void dce_v11_0_crtc_dpms(struct drm_crtc *crtc, int mode)
 		dce_v11_0_vga_enable(crtc, true);
 		amdgpu_atombios_crtc_blank(crtc, ATOM_DISABLE);
 		dce_v11_0_vga_enable(crtc, false);
-		drm_vblank_post_modeset(dev, amdgpu_crtc->crtc_id);
+		/* Make sure VBLANK and PFLIP interrupts are still enabled */
+		type = amdgpu_crtc_idx_to_irq_type(adev, amdgpu_crtc->crtc_id);
+		amdgpu_irq_update(adev, &adev->crtc_irq, type);
+		amdgpu_irq_update(adev, &adev->pageflip_irq, type);
+		drm_crtc_vblank_on(crtc);
 		dce_v11_0_crtc_load_lut(crtc);
 		break;
 	case DRM_MODE_DPMS_STANDBY:
 	case DRM_MODE_DPMS_SUSPEND:
 	case DRM_MODE_DPMS_OFF:
-		drm_vblank_pre_modeset(dev, amdgpu_crtc->crtc_id);
+		drm_crtc_vblank_off(crtc);
 		if (amdgpu_crtc->enabled) {
 			dce_v11_0_vga_enable(crtc, true);
 			amdgpu_atombios_crtc_blank(crtc, ATOM_ENABLE);
@@ -2685,16 +2752,16 @@ static void dce_v11_0_crtc_disable(struct drm_crtc *crtc)
 	if (crtc->primary->fb) {
 		int r;
 		struct amdgpu_framebuffer *amdgpu_fb;
-		struct amdgpu_bo *rbo;
+		struct amdgpu_bo *abo;
 
 		amdgpu_fb = to_amdgpu_framebuffer(crtc->primary->fb);
-		rbo = gem_to_amdgpu_bo(amdgpu_fb->obj);
-		r = amdgpu_bo_reserve(rbo, false);
+		abo = gem_to_amdgpu_bo(amdgpu_fb->obj);
+		r = amdgpu_bo_reserve(abo, false);
 		if (unlikely(r))
-			DRM_ERROR("failed to reserve rbo before unpin\n");
+			DRM_ERROR("failed to reserve abo before unpin\n");
 		else {
-			amdgpu_bo_unpin(rbo);
-			amdgpu_bo_unreserve(rbo);
+			amdgpu_bo_unpin(abo);
+			amdgpu_bo_unreserve(abo);
 		}
 	}
 	/* disable the GRPH */
@@ -2720,7 +2787,17 @@ static void dce_v11_0_crtc_disable(struct drm_crtc *crtc)
 	case ATOM_PPLL2:
 		/* disable the ppll */
 		amdgpu_atombios_crtc_program_pll(crtc, amdgpu_crtc->crtc_id, amdgpu_crtc->pll_id,
-					  0, 0, ATOM_DISABLE, 0, 0, 0, 0, 0, false, &ss);
+						 0, 0, ATOM_DISABLE, 0, 0, 0, 0, 0, false, &ss);
+		break;
+	case ATOM_COMBOPHY_PLL0:
+	case ATOM_COMBOPHY_PLL1:
+	case ATOM_COMBOPHY_PLL2:
+	case ATOM_COMBOPHY_PLL3:
+	case ATOM_COMBOPHY_PLL4:
+	case ATOM_COMBOPHY_PLL5:
+		/* disable the ppll */
+		amdgpu_atombios_crtc_program_pll(crtc, ATOM_CRTC_INVALID, amdgpu_crtc->pll_id,
+						 0, 0, ATOM_DISABLE, 0, 0, 0, 0, 0, false, &ss);
 		break;
 	default:
 		break;
@@ -2738,15 +2815,33 @@ static int dce_v11_0_crtc_mode_set(struct drm_crtc *crtc,
 				  int x, int y, struct drm_framebuffer *old_fb)
 {
 	struct amdgpu_crtc *amdgpu_crtc = to_amdgpu_crtc(crtc);
+	struct drm_device *dev = crtc->dev;
+	struct amdgpu_device *adev = dev->dev_private;
 
 	if (!amdgpu_crtc->adjusted_clock)
 		return -EINVAL;
 
-	amdgpu_atombios_crtc_set_pll(crtc, adjusted_mode);
+	if ((adev->asic_type == CHIP_POLARIS10) ||
+	    (adev->asic_type == CHIP_POLARIS11)) {
+		struct amdgpu_encoder *amdgpu_encoder =
+			to_amdgpu_encoder(amdgpu_crtc->encoder);
+		int encoder_mode =
+			amdgpu_atombios_encoder_get_encoder_mode(amdgpu_crtc->encoder);
+
+		/* SetPixelClock calculates the plls and ss values now */
+		amdgpu_atombios_crtc_program_pll(crtc, amdgpu_crtc->crtc_id,
+						 amdgpu_crtc->pll_id,
+						 encoder_mode, amdgpu_encoder->encoder_id,
+						 adjusted_mode->clock, 0, 0, 0, 0,
+						 amdgpu_crtc->bpc, amdgpu_crtc->ss_enabled, &amdgpu_crtc->ss);
+	} else {
+		amdgpu_atombios_crtc_set_pll(crtc, adjusted_mode);
+	}
 	amdgpu_atombios_crtc_set_dtd_timing(crtc, adjusted_mode);
 	dce_v11_0_crtc_do_set_base(crtc, old_fb, x, y, 0);
 	amdgpu_atombios_crtc_overscan_setup(crtc, mode, adjusted_mode);
 	amdgpu_atombios_crtc_scaler_setup(crtc);
+	dce_v11_0_cursor_reset(crtc);
 	/* update the hw version fpr dpm */
 	amdgpu_crtc->hw_mode = *adjusted_mode;
 
@@ -2827,7 +2922,6 @@ static int dce_v11_0_crtc_init(struct amdgpu_device *adev, int index)
 
 	drm_mode_crtc_set_gamma_size(&amdgpu_crtc->base, 256);
 	amdgpu_crtc->crtc_id = index;
-	amdgpu_crtc->pflip_queue = create_singlethread_workqueue("amdgpu-pageflip-queue");
 	adev->mode_info.crtcs[index] = amdgpu_crtc;
 
 	amdgpu_crtc->max_cursor_width = 128;
@@ -2882,11 +2976,24 @@ static int dce_v11_0_early_init(void *handle)
 	dce_v11_0_set_display_funcs(adev);
 	dce_v11_0_set_irq_funcs(adev);
 
+	adev->mode_info.num_crtc = dce_v11_0_get_num_crtc(adev);
+
 	switch (adev->asic_type) {
 	case CHIP_CARRIZO:
-		adev->mode_info.num_crtc = 4;
 		adev->mode_info.num_hpd = 6;
 		adev->mode_info.num_dig = 9;
+		break;
+	case CHIP_STONEY:
+		adev->mode_info.num_hpd = 6;
+		adev->mode_info.num_dig = 9;
+		break;
+	case CHIP_POLARIS10:
+		adev->mode_info.num_hpd = 6;
+		adev->mode_info.num_dig = 6;
+		break;
+	case CHIP_POLARIS11:
+		adev->mode_info.num_hpd = 5;
+		adev->mode_info.num_dig = 5;
 		break;
 	default:
 		/* FIXME: not supported yet */
@@ -2904,7 +3011,7 @@ static int dce_v11_0_sw_init(void *handle)
 	for (i = 0; i < adev->mode_info.num_crtc; i++) {
 		r = amdgpu_irq_add_id(adev, i + 1, &adev->crtc_irq);
 		if (r)
-		return r;
+			return r;
 	}
 
 	for (i = 8; i < 20; i += 2) {
@@ -2916,11 +3023,11 @@ static int dce_v11_0_sw_init(void *handle)
 	/* HPD hotplug */
 	r = amdgpu_irq_add_id(adev, 42, &adev->hpd_irq);
 	if (r)
-	return r;
-
-	adev->mode_info.mode_config_initialized = true;
+		return r;
 
 	adev->ddev->mode_config.funcs = &amdgpu_mode_funcs;
+
+	adev->ddev->mode_config.async_page_flip = true;
 
 	adev->ddev->mode_config.max_width = 16384;
 	adev->ddev->mode_config.max_height = 16384;
@@ -2937,6 +3044,7 @@ static int dce_v11_0_sw_init(void *handle)
 	adev->ddev->mode_config.max_width = 16384;
 	adev->ddev->mode_config.max_height = 16384;
 
+
 	/* allocate crtcs */
 	for (i = 0; i < adev->mode_info.num_crtc; i++) {
 		r = dce_v11_0_crtc_init(adev, i);
@@ -2950,7 +3058,9 @@ static int dce_v11_0_sw_init(void *handle)
 		return -EINVAL;
 
 	/* setup afmt */
-	dce_v11_0_afmt_init(adev);
+	r = dce_v11_0_afmt_init(adev);
+	if (r)
+		return r;
 
 	r = dce_v11_0_audio_init(adev);
 	if (r)
@@ -2958,7 +3068,8 @@ static int dce_v11_0_sw_init(void *handle)
 
 	drm_kms_helper_poll_init(adev->ddev);
 
-	return r;
+	adev->mode_info.mode_config_initialized = true;
+	return 0;
 }
 
 static int dce_v11_0_sw_fini(void *handle)
@@ -2973,6 +3084,7 @@ static int dce_v11_0_sw_fini(void *handle)
 
 	dce_v11_0_afmt_fini(adev);
 
+	drm_mode_config_cleanup(adev->ddev);
 	adev->mode_info.mode_config_initialized = false;
 
 	return 0;
@@ -2986,8 +3098,17 @@ static int dce_v11_0_hw_init(void *handle)
 	dce_v11_0_init_golden_registers(adev);
 
 	/* init dig PHYs, disp eng pll */
+	amdgpu_atombios_crtc_powergate_init(adev);
 	amdgpu_atombios_encoder_init_dig(adev);
-	amdgpu_atombios_crtc_set_disp_eng_pll(adev, adev->clock.default_dispclk);
+	if ((adev->asic_type == CHIP_POLARIS10) ||
+	    (adev->asic_type == CHIP_POLARIS11)) {
+		amdgpu_atombios_crtc_set_dce_clock(adev, adev->clock.default_dispclk,
+						   DCE_CLOCK_TYPE_DISPCLK, ATOM_GCK_DFS);
+		amdgpu_atombios_crtc_set_dce_clock(adev, 0,
+						   DCE_CLOCK_TYPE_DPREFCLK, ATOM_GCK_DFS);
+	} else {
+		amdgpu_atombios_crtc_set_disp_eng_pll(adev, adev->clock.default_dispclk);
+	}
 
 	/* initialize hpd */
 	dce_v11_0_hpd_init(adev);
@@ -2995,6 +3116,8 @@ static int dce_v11_0_hw_init(void *handle)
 	for (i = 0; i < adev->mode_info.audio.num_pins; i++) {
 		dce_v11_0_audio_enable(adev, &adev->mode_info.audio.pin[i], false);
 	}
+
+	dce_v11_0_pageflip_interrupt_init(adev);
 
 	return 0;
 }
@@ -3010,32 +3133,23 @@ static int dce_v11_0_hw_fini(void *handle)
 		dce_v11_0_audio_enable(adev, &adev->mode_info.audio.pin[i], false);
 	}
 
+	dce_v11_0_pageflip_interrupt_fini(adev);
+
 	return 0;
 }
 
 static int dce_v11_0_suspend(void *handle)
 {
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
-
-	amdgpu_atombios_scratch_regs_save(adev);
-
-	dce_v11_0_hpd_fini(adev);
-
-	return 0;
+	return dce_v11_0_hw_fini(handle);
 }
 
 static int dce_v11_0_resume(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	int ret;
 
-	dce_v11_0_init_golden_registers(adev);
+	ret = dce_v11_0_hw_init(handle);
 
-	amdgpu_atombios_scratch_regs_restore(adev);
-
-	/* init dig PHYs, disp eng pll */
-	amdgpu_atombios_crtc_powergate_init(adev);
-	amdgpu_atombios_encoder_init_dig(adev);
-	amdgpu_atombios_crtc_set_disp_eng_pll(adev, adev->clock.default_dispclk);
 	/* turn on the BL */
 	if (adev->mode_info.bl_encoder) {
 		u8 bl_level = amdgpu_display_backlight_get_level(adev,
@@ -3044,10 +3158,7 @@ static int dce_v11_0_resume(void *handle)
 						    bl_level);
 	}
 
-	/* initialize hpd */
-	dce_v11_0_hpd_init(adev);
-
-	return 0;
+	return ret;
 }
 
 static bool dce_v11_0_is_idle(void *handle)
@@ -3060,14 +3171,6 @@ static int dce_v11_0_wait_for_idle(void *handle)
 	return 0;
 }
 
-static void dce_v11_0_print_status(void *handle)
-{
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
-
-	dev_info(adev->dev, "DCE 10.x registers\n");
-	/* XXX todo */
-}
-
 static int dce_v11_0_soft_reset(void *handle)
 {
 	u32 srbm_soft_reset = 0, tmp;
@@ -3077,8 +3180,6 @@ static int dce_v11_0_soft_reset(void *handle)
 		srbm_soft_reset |= SRBM_SOFT_RESET__SOFT_RESET_DC_MASK;
 
 	if (srbm_soft_reset) {
-		dce_v11_0_print_status((void *)adev);
-
 		tmp = RREG32(mmSRBM_SOFT_RESET);
 		tmp |= srbm_soft_reset;
 		dev_info(adev->dev, "SRBM_SOFT_RESET=0x%08X\n", tmp);
@@ -3093,7 +3194,6 @@ static int dce_v11_0_soft_reset(void *handle)
 
 		/* Wait a little for things to settle down */
 		udelay(50);
-		dce_v11_0_print_status((void *)adev);
 	}
 	return 0;
 }
@@ -3239,37 +3339,20 @@ static int dce_v11_0_set_pageflip_irq_state(struct amdgpu_device *adev,
 					    unsigned type,
 					    enum amdgpu_interrupt_state state)
 {
-	u32 reg, reg_block;
-	/* now deal with page flip IRQ */
-	switch (type) {
-		case AMDGPU_PAGEFLIP_IRQ_D1:
-			reg_block = CRTC0_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D2:
-			reg_block = CRTC1_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D3:
-			reg_block = CRTC2_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D4:
-			reg_block = CRTC3_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D5:
-			reg_block = CRTC4_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D6:
-			reg_block = CRTC5_REGISTER_OFFSET;
-			break;
-		default:
-			DRM_ERROR("invalid pageflip crtc %d\n", type);
-			return -EINVAL;
+	u32 reg;
+
+	if (type >= adev->mode_info.num_crtc) {
+		DRM_ERROR("invalid pageflip crtc %d\n", type);
+		return -EINVAL;
 	}
 
-	reg = RREG32(mmGRPH_INTERRUPT_CONTROL + reg_block);
+	reg = RREG32(mmGRPH_INTERRUPT_CONTROL + crtc_offsets[type]);
 	if (state == AMDGPU_IRQ_STATE_DISABLE)
-		WREG32(mmGRPH_INTERRUPT_CONTROL + reg_block, reg & ~GRPH_INTERRUPT_CONTROL__GRPH_PFLIP_INT_MASK_MASK);
+		WREG32(mmGRPH_INTERRUPT_CONTROL + crtc_offsets[type],
+		       reg & ~GRPH_INTERRUPT_CONTROL__GRPH_PFLIP_INT_MASK_MASK);
 	else
-		WREG32(mmGRPH_INTERRUPT_CONTROL + reg_block, reg | GRPH_INTERRUPT_CONTROL__GRPH_PFLIP_INT_MASK_MASK);
+		WREG32(mmGRPH_INTERRUPT_CONTROL + crtc_offsets[type],
+		       reg | GRPH_INTERRUPT_CONTROL__GRPH_PFLIP_INT_MASK_MASK);
 
 	return 0;
 }
@@ -3278,7 +3361,6 @@ static int dce_v11_0_pageflip_irq(struct amdgpu_device *adev,
 				  struct amdgpu_irq_src *source,
 				  struct amdgpu_iv_entry *entry)
 {
-	int reg_block;
 	unsigned long flags;
 	unsigned crtc_id;
 	struct amdgpu_crtc *amdgpu_crtc;
@@ -3287,33 +3369,15 @@ static int dce_v11_0_pageflip_irq(struct amdgpu_device *adev,
 	crtc_id = (entry->src_id - 8) >> 1;
 	amdgpu_crtc = adev->mode_info.crtcs[crtc_id];
 
-	/* ack the interrupt */
-	switch(crtc_id){
-		case AMDGPU_PAGEFLIP_IRQ_D1:
-			reg_block = CRTC0_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D2:
-			reg_block = CRTC1_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D3:
-			reg_block = CRTC2_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D4:
-			reg_block = CRTC3_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D5:
-			reg_block = CRTC4_REGISTER_OFFSET;
-			break;
-		case AMDGPU_PAGEFLIP_IRQ_D6:
-			reg_block = CRTC5_REGISTER_OFFSET;
-			break;
-		default:
-			DRM_ERROR("invalid pageflip crtc %d\n", crtc_id);
-			return -EINVAL;
+	if (crtc_id >= adev->mode_info.num_crtc) {
+		DRM_ERROR("invalid pageflip crtc %d\n", crtc_id);
+		return -EINVAL;
 	}
 
-	if (RREG32(mmGRPH_INTERRUPT_STATUS + reg_block) & GRPH_INTERRUPT_STATUS__GRPH_PFLIP_INT_OCCURRED_MASK)
-		WREG32(mmGRPH_INTERRUPT_STATUS + reg_block, GRPH_INTERRUPT_STATUS__GRPH_PFLIP_INT_CLEAR_MASK);
+	if (RREG32(mmGRPH_INTERRUPT_STATUS + crtc_offsets[crtc_id]) &
+	    GRPH_INTERRUPT_STATUS__GRPH_PFLIP_INT_OCCURRED_MASK)
+		WREG32(mmGRPH_INTERRUPT_STATUS + crtc_offsets[crtc_id],
+		       GRPH_INTERRUPT_STATUS__GRPH_PFLIP_INT_CLEAR_MASK);
 
 	/* IRQ could occur when in initial stage */
 	if(amdgpu_crtc == NULL)
@@ -3336,13 +3400,12 @@ static int dce_v11_0_pageflip_irq(struct amdgpu_device *adev,
 
 	/* wakeup usersapce */
 	if(works->event)
-		drm_send_vblank_event(adev->ddev, crtc_id, works->event);
+		drm_crtc_send_vblank_event(&amdgpu_crtc->base, works->event);
 
 	spin_unlock_irqrestore(&adev->ddev->event_lock, flags);
 
-	drm_vblank_put(adev->ddev, amdgpu_crtc->crtc_id);
-	amdgpu_irq_put(adev, &adev->pageflip_irq, crtc_id);
-	queue_work(amdgpu_crtc->pflip_queue, &works->unpin_work);
+	drm_crtc_vblank_put(&amdgpu_crtc->base);
+	schedule_work(&works->unpin_work);
 
 	return 0;
 }
@@ -3367,7 +3430,7 @@ static void dce_v11_0_crtc_vblank_int_ack(struct amdgpu_device *adev,
 {
 	u32 tmp;
 
-	if (crtc >= adev->mode_info.num_crtc) {
+	if (crtc < 0 || crtc >= adev->mode_info.num_crtc) {
 		DRM_DEBUG("invalid crtc %d\n", crtc);
 		return;
 	}
@@ -3382,7 +3445,7 @@ static void dce_v11_0_crtc_vline_int_ack(struct amdgpu_device *adev,
 {
 	u32 tmp;
 
-	if (crtc >= adev->mode_info.num_crtc) {
+	if (crtc < 0 || crtc >= adev->mode_info.num_crtc) {
 		DRM_DEBUG("invalid crtc %d\n", crtc);
 		return;
 	}
@@ -3467,7 +3530,8 @@ static int dce_v11_0_set_powergating_state(void *handle,
 	return 0;
 }
 
-const struct amd_ip_funcs dce_v11_0_ip_funcs = {
+static const struct amd_ip_funcs dce_v11_0_ip_funcs = {
+	.name = "dce_v11_0",
 	.early_init = dce_v11_0_early_init,
 	.late_init = NULL,
 	.sw_init = dce_v11_0_sw_init,
@@ -3479,7 +3543,6 @@ const struct amd_ip_funcs dce_v11_0_ip_funcs = {
 	.is_idle = dce_v11_0_is_idle,
 	.wait_for_idle = dce_v11_0_wait_for_idle,
 	.soft_reset = dce_v11_0_soft_reset,
-	.print_status = dce_v11_0_print_status,
 	.set_clockgating_state = dce_v11_0_set_clockgating_state,
 	.set_powergating_state = dce_v11_0_set_powergating_state,
 };
@@ -3600,16 +3663,8 @@ dce_v11_0_ext_dpms(struct drm_encoder *encoder, int mode)
 
 }
 
-static bool dce_v11_0_ext_mode_fixup(struct drm_encoder *encoder,
-				    const struct drm_display_mode *mode,
-				    struct drm_display_mode *adjusted_mode)
-{
-	return true;
-}
-
 static const struct drm_encoder_helper_funcs dce_v11_0_ext_helper_funcs = {
 	.dpms = dce_v11_0_ext_dpms,
-	.mode_fixup = dce_v11_0_ext_mode_fixup,
 	.prepare = dce_v11_0_ext_prepare,
 	.mode_set = dce_v11_0_ext_mode_set,
 	.commit = dce_v11_0_ext_commit,
@@ -3705,7 +3760,7 @@ static void dce_v11_0_encoder_add(struct amdgpu_device *adev,
 	case ENCODER_OBJECT_ID_INTERNAL_KLDSCP_DAC1:
 	case ENCODER_OBJECT_ID_INTERNAL_KLDSCP_DAC2:
 		drm_encoder_init(dev, encoder, &dce_v11_0_encoder_funcs,
-				 DRM_MODE_ENCODER_DAC);
+				 DRM_MODE_ENCODER_DAC, NULL);
 		drm_encoder_helper_add(encoder, &dce_v11_0_dac_helper_funcs);
 		break;
 	case ENCODER_OBJECT_ID_INTERNAL_KLDSCP_DVO1:
@@ -3716,15 +3771,15 @@ static void dce_v11_0_encoder_add(struct amdgpu_device *adev,
 		if (amdgpu_encoder->devices & (ATOM_DEVICE_LCD_SUPPORT)) {
 			amdgpu_encoder->rmx_type = RMX_FULL;
 			drm_encoder_init(dev, encoder, &dce_v11_0_encoder_funcs,
-					 DRM_MODE_ENCODER_LVDS);
+					 DRM_MODE_ENCODER_LVDS, NULL);
 			amdgpu_encoder->enc_priv = amdgpu_atombios_encoder_get_lcd_info(amdgpu_encoder);
 		} else if (amdgpu_encoder->devices & (ATOM_DEVICE_CRT_SUPPORT)) {
 			drm_encoder_init(dev, encoder, &dce_v11_0_encoder_funcs,
-					 DRM_MODE_ENCODER_DAC);
+					 DRM_MODE_ENCODER_DAC, NULL);
 			amdgpu_encoder->enc_priv = amdgpu_atombios_encoder_get_dig_info(amdgpu_encoder);
 		} else {
 			drm_encoder_init(dev, encoder, &dce_v11_0_encoder_funcs,
-					 DRM_MODE_ENCODER_TMDS);
+					 DRM_MODE_ENCODER_TMDS, NULL);
 			amdgpu_encoder->enc_priv = amdgpu_atombios_encoder_get_dig_info(amdgpu_encoder);
 		}
 		drm_encoder_helper_add(encoder, &dce_v11_0_dig_helper_funcs);
@@ -3742,13 +3797,13 @@ static void dce_v11_0_encoder_add(struct amdgpu_device *adev,
 		amdgpu_encoder->is_ext_encoder = true;
 		if (amdgpu_encoder->devices & (ATOM_DEVICE_LCD_SUPPORT))
 			drm_encoder_init(dev, encoder, &dce_v11_0_encoder_funcs,
-					 DRM_MODE_ENCODER_LVDS);
+					 DRM_MODE_ENCODER_LVDS, NULL);
 		else if (amdgpu_encoder->devices & (ATOM_DEVICE_CRT_SUPPORT))
 			drm_encoder_init(dev, encoder, &dce_v11_0_encoder_funcs,
-					 DRM_MODE_ENCODER_DAC);
+					 DRM_MODE_ENCODER_DAC, NULL);
 		else
 			drm_encoder_init(dev, encoder, &dce_v11_0_encoder_funcs,
-					 DRM_MODE_ENCODER_TMDS);
+					 DRM_MODE_ENCODER_TMDS, NULL);
 		drm_encoder_helper_add(encoder, &dce_v11_0_ext_helper_funcs);
 		break;
 	}
@@ -3759,7 +3814,6 @@ static const struct amdgpu_display_funcs dce_v11_0_display_funcs = {
 	.bandwidth_update = &dce_v11_0_bandwidth_update,
 	.vblank_get_counter = &dce_v11_0_vblank_get_counter,
 	.vblank_wait = &dce_v11_0_vblank_wait,
-	.is_display_hung = &dce_v11_0_is_display_hung,
 	.backlight_set_level = &amdgpu_atombios_encoder_set_backlight_level,
 	.backlight_get_level = &amdgpu_atombios_encoder_get_backlight_level,
 	.hpd_sense = &dce_v11_0_hpd_sense,
@@ -3805,3 +3859,21 @@ static void dce_v11_0_set_irq_funcs(struct amdgpu_device *adev)
 	adev->hpd_irq.num_types = AMDGPU_HPD_LAST;
 	adev->hpd_irq.funcs = &dce_v11_0_hpd_irq_funcs;
 }
+
+const struct amdgpu_ip_block_version dce_v11_0_ip_block =
+{
+	.type = AMD_IP_BLOCK_TYPE_DCE,
+	.major = 11,
+	.minor = 0,
+	.rev = 0,
+	.funcs = &dce_v11_0_ip_funcs,
+};
+
+const struct amdgpu_ip_block_version dce_v11_2_ip_block =
+{
+	.type = AMD_IP_BLOCK_TYPE_DCE,
+	.major = 11,
+	.minor = 2,
+	.rev = 0,
+	.funcs = &dce_v11_0_ip_funcs,
+};

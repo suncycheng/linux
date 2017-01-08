@@ -402,7 +402,6 @@ static const struct bond_option bond_opts[BOND_OPT_LAST] = {
 		.id = BOND_OPT_AD_ACTOR_SYS_PRIO,
 		.name = "ad_actor_sys_prio",
 		.unsuppmodes = BOND_MODE_ALL_EX(BIT(BOND_MODE_8023AD)),
-		.flags = BOND_OPTFLAG_IFDOWN,
 		.values = bond_ad_actor_sys_prio_tbl,
 		.set = bond_option_ad_actor_sys_prio_set,
 	},
@@ -410,7 +409,7 @@ static const struct bond_option bond_opts[BOND_OPT_LAST] = {
 		.id = BOND_OPT_AD_ACTOR_SYSTEM,
 		.name = "ad_actor_system",
 		.unsuppmodes = BOND_MODE_ALL_EX(BIT(BOND_MODE_8023AD)),
-		.flags = BOND_OPTFLAG_RAWVAL | BOND_OPTFLAG_IFDOWN,
+		.flags = BOND_OPTFLAG_RAWVAL,
 		.set = bond_option_ad_actor_system_set,
 	},
 	[BOND_OPT_AD_USER_PORT_KEY] = {
@@ -420,6 +419,13 @@ static const struct bond_option bond_opts[BOND_OPT_LAST] = {
 		.flags = BOND_OPTFLAG_IFDOWN,
 		.values = bond_ad_user_port_key_tbl,
 		.set = bond_option_ad_user_port_key_set,
+	},
+	[BOND_OPT_NUM_PEER_NOTIF_ALIAS] = {
+		.id = BOND_OPT_NUM_PEER_NOTIF_ALIAS,
+		.name = "num_grat_arp",
+		.desc = "Number of peer notifications to send on failover event",
+		.values = bond_num_peer_notif_tbl,
+		.set = bond_option_num_peer_notif_set
 	}
 };
 
@@ -728,19 +734,6 @@ static int bond_option_mode_set(struct bonding *bond,
 	bond->params.mode = newval->value;
 
 	return 0;
-}
-
-static struct net_device *__bond_option_active_slave_get(struct bonding *bond,
-							 struct slave *slave)
-{
-	return bond_uses_primary(bond) && slave ? slave->dev : NULL;
-}
-
-struct net_device *bond_option_active_slave_get_rcu(struct bonding *bond)
-{
-	struct slave *slave = rcu_dereference(bond->curr_active_slave);
-
-	return __bond_option_active_slave_get(bond, slave);
 }
 
 static int bond_option_active_slave_set(struct bonding *bond,
@@ -1398,6 +1391,8 @@ static int bond_option_ad_actor_sys_prio_set(struct bonding *bond,
 		    newval->value);
 
 	bond->params.ad_actor_sys_prio = newval->value;
+	bond_3ad_update_ad_actor_settings(bond);
+
 	return 0;
 }
 
@@ -1424,6 +1419,8 @@ static int bond_option_ad_actor_system_set(struct bonding *bond,
 
 	netdev_info(bond->dev, "Setting ad_actor_system to %pM\n", mac);
 	ether_addr_copy(bond->params.ad_actor_system, mac);
+	bond_3ad_update_ad_actor_settings(bond);
+
 	return 0;
 
 err:

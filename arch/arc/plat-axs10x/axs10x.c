@@ -14,13 +14,14 @@
  *
  */
 
+#include <linux/of_fdt.h>
 #include <linux/of_platform.h>
+#include <linux/libfdt.h>
 
 #include <asm/asm-offsets.h>
-#include <asm/clk.h>
 #include <asm/io.h>
 #include <asm/mach_desc.h>
-#include <asm/mcip.h>
+#include <soc/arc/mcip.h>
 
 #define AXS_MB_CGU		0xE0010000
 #define AXS_MB_CREG		0xE0011000
@@ -46,7 +47,7 @@ static void __init axs10x_enable_gpio_intc_wire(void)
 	 * -------------------   -------------------
 	 * | snps,dw-apb-gpio |  | snps,dw-apb-gpio |
 	 * -------------------   -------------------
-	 *        |                         |
+	 *        | #12                     |
 	 *        |                 [ Debug UART on cpu card ]
 	 *        |
 	 * ------------------------
@@ -389,7 +390,29 @@ axs103_set_freq(unsigned int id, unsigned int fd, unsigned int od)
 
 static void __init axs103_early_init(void)
 {
-	switch (arc_get_core_freq()/1000000) {
+	int offset = fdt_path_offset(initial_boot_params, "/cpu_card/core_clk");
+	const struct fdt_property *prop = fdt_get_property(initial_boot_params,
+							   offset,
+							   "clock-frequency",
+							   NULL);
+	u32 freq = be32_to_cpu(*(u32*)(prop->data)) / 1000000, orig = freq;
+
+	/*
+	 * AXS103 configurations for SMP/QUAD configurations share device tree
+	 * which defaults to 90 MHz. However recent failures of Quad config
+	 * revealed P&R timing violations so clamp it down to safe 50 MHz
+	 * Instead of duplicating defconfig/DT for SMP/QUAD, add a small hack
+	 *
+	 * This hack is really hacky as of now. Fix it properly by getting the
+	 * number of cores as return value of platform's early SMP callback
+	 */
+#ifdef CONFIG_ARC_MCIP
+	unsigned int num_cores = (read_aux_reg(ARC_REG_MCIP_BCR) >> 16) & 0x3F;
+	if (num_cores > 2)
+		freq = 50;
+#endif
+
+	switch (freq) {
 	case 33:
 		axs103_set_freq(1, 1, 1);
 		break;
@@ -414,11 +437,18 @@ static void __init axs103_early_init(void)
 		 * DT "clock-frequency" might not match with board value.
 		 * Hence update it to match the board value.
 		 */
-		arc_set_core_freq(axs103_get_freq() * 1000000);
+		freq = axs103_get_freq();
 		break;
 	}
 
-	pr_info("Freq is %dMHz\n", axs103_get_freq());
+	pr_info("Freq is %dMHz\n", freq);
+
+	/* Patching .dtb in-place with new core clock value */
+	if (freq != orig ) {
+		freq = cpu_to_be32(freq * 1000000);
+		fdt_setprop_inplace(initial_boot_params, offset,
+				    "clock-frequency", &freq, sizeof(freq));
+	}
 
 	/* Memory maps already config in pre-bootloader */
 
@@ -438,11 +468,6 @@ static void __init axs103_early_init(void)
 	axs10x_print_board_ver(AXC003_CREG + 4088, "AXC003 CPU Card");
 
 	axs10x_early_init();
-
-#ifdef CONFIG_ARC_MCIP
-	/* No Hardware init, but filling the smp ops callbacks */
-	mcip_init_early_smp();
-#endif
 }
 #endif
 
@@ -470,9 +495,6 @@ static const char *axs103_compat[] __initconst = {
 MACHINE_START(AXS103, "axs103")
 	.dt_compat	= axs103_compat,
 	.init_early	= axs103_early_init,
-#ifdef CONFIG_ARC_MCIP
-	.init_smp	= mcip_init_smp,
-#endif
 MACHINE_END
 
 /*

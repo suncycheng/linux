@@ -85,6 +85,11 @@ static void perf_probe_comm_exec(struct perf_evsel *evsel)
 	evsel->attr.comm_exec = 1;
 }
 
+static void perf_probe_context_switch(struct perf_evsel *evsel)
+{
+	evsel->attr.context_switch = 1;
+}
+
 bool perf_can_sample_identifier(void)
 {
 	return perf_probe_api(perf_probe_sample_identifier);
@@ -95,7 +100,37 @@ static bool perf_can_comm_exec(void)
 	return perf_probe_api(perf_probe_comm_exec);
 }
 
-void perf_evlist__config(struct perf_evlist *evlist, struct record_opts *opts)
+bool perf_can_record_switch_events(void)
+{
+	return perf_probe_api(perf_probe_context_switch);
+}
+
+bool perf_can_record_cpu_wide(void)
+{
+	struct perf_event_attr attr = {
+		.type = PERF_TYPE_SOFTWARE,
+		.config = PERF_COUNT_SW_CPU_CLOCK,
+		.exclude_kernel = 1,
+	};
+	struct cpu_map *cpus;
+	int cpu, fd;
+
+	cpus = cpu_map__new(NULL);
+	if (!cpus)
+		return false;
+	cpu = cpus->map[0];
+	cpu_map__put(cpus);
+
+	fd = sys_perf_event_open(&attr, -1, cpu, -1, 0);
+	if (fd < 0)
+		return false;
+	close(fd);
+
+	return true;
+}
+
+void perf_evlist__config(struct perf_evlist *evlist, struct record_opts *opts,
+			 struct callchain_param *callchain)
 {
 	struct perf_evsel *evsel;
 	bool use_sample_identifier = false;
@@ -113,8 +148,8 @@ void perf_evlist__config(struct perf_evlist *evlist, struct record_opts *opts)
 
 	use_comm_exec = perf_can_comm_exec();
 
-	evlist__for_each(evlist, evsel) {
-		perf_evsel__config(evsel, opts);
+	evlist__for_each_entry(evlist, evsel) {
+		perf_evsel__config(evsel, opts, callchain);
 		if (evsel->tracking && use_comm_exec)
 			evsel->attr.comm_exec = 1;
 	}
@@ -126,18 +161,18 @@ void perf_evlist__config(struct perf_evlist *evlist, struct record_opts *opts)
 		 * match the id.
 		 */
 		use_sample_identifier = perf_can_sample_identifier();
-		evlist__for_each(evlist, evsel)
+		evlist__for_each_entry(evlist, evsel)
 			perf_evsel__set_sample_id(evsel, use_sample_identifier);
 	} else if (evlist->nr_entries > 1) {
 		struct perf_evsel *first = perf_evlist__first(evlist);
 
-		evlist__for_each(evlist, evsel) {
+		evlist__for_each_entry(evlist, evsel) {
 			if (evsel->attr.sample_type == first->attr.sample_type)
 				continue;
 			use_sample_identifier = perf_can_sample_identifier();
 			break;
 		}
-		evlist__for_each(evlist, evsel)
+		evlist__for_each_entry(evlist, evsel)
 			perf_evsel__set_sample_id(evsel, use_sample_identifier);
 	}
 

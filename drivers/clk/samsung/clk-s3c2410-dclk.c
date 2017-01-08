@@ -8,6 +8,10 @@
  * Common Clock Framework support for s3c24xx external clock output.
  */
 
+#include <linux/clkdev.h>
+#include <linux/slab.h>
+#include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <linux/platform_device.h>
 #include <linux/module.h>
 #include "clk.h"
@@ -57,7 +61,7 @@ struct s3c24xx_clkout {
 static u8 s3c24xx_clkout_get_parent(struct clk_hw *hw)
 {
 	struct s3c24xx_clkout *clkout = to_s3c24xx_clkout(hw);
-	int num_parents = __clk_get_num_parents(hw->clk);
+	int num_parents = clk_hw_get_num_parents(hw);
 	u32 val;
 
 	val = readl_relaxed(S3C24XX_MISCCR) >> clkout->shift;
@@ -73,12 +77,11 @@ static u8 s3c24xx_clkout_get_parent(struct clk_hw *hw)
 static int s3c24xx_clkout_set_parent(struct clk_hw *hw, u8 index)
 {
 	struct s3c24xx_clkout *clkout = to_s3c24xx_clkout(hw);
-	int ret = 0;
 
 	s3c2410_modify_misccr((clkout->mask << clkout->shift),
 			      (index << clkout->shift));
 
-	return ret;
+	return 0;
 }
 
 static const struct clk_ops s3c24xx_clkout_ops = {
@@ -425,8 +428,9 @@ MODULE_DEVICE_TABLE(platform, s3c24xx_dclk_driver_ids);
 
 static struct platform_driver s3c24xx_dclk_driver = {
 	.driver = {
-		.name		= "s3c24xx-dclk",
-		.pm		= &s3c24xx_dclk_pm_ops,
+		.name			= "s3c24xx-dclk",
+		.pm			= &s3c24xx_dclk_pm_ops,
+		.suppress_bind_attrs	= true,
 	},
 	.probe = s3c24xx_dclk_probe,
 	.remove = s3c24xx_dclk_remove,

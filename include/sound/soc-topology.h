@@ -53,13 +53,7 @@ struct snd_soc_dobj_control {
 
 /* dynamic widget object */
 struct snd_soc_dobj_widget {
-	unsigned int kcontrol_enum:1;	/* this widget is an enum kcontrol */
-};
-
-/* dynamic PCM DAI object */
-struct snd_soc_dobj_pcm_dai {
-	struct snd_soc_tplg_pcm_dai *pd;
-	unsigned int count;
+	unsigned int kcontrol_type;	/* kcontrol type: mixer, enum, bytes */
 };
 
 /* generic dynamic object - all dynamic objects belong to this struct */
@@ -71,7 +65,6 @@ struct snd_soc_dobj {
 	union {
 		struct snd_soc_dobj_control control;
 		struct snd_soc_dobj_widget widget;
-		struct snd_soc_dobj_pcm_dai pcm_dai;
 	};
 	void *private; /* core does not touch this */
 };
@@ -87,6 +80,15 @@ struct snd_soc_tplg_kcontrol_ops {
 			struct snd_ctl_elem_value *ucontrol);
 	int (*info)(struct snd_kcontrol *kcontrol,
 		struct snd_ctl_elem_info *uinfo);
+};
+
+/* Bytes ext operations, for TLV byte controls */
+struct snd_soc_tplg_bytes_ext_ops {
+	u32 id;
+	int (*get)(struct snd_kcontrol *kcontrol, unsigned int __user *bytes,
+							unsigned int size);
+	int (*put)(struct snd_kcontrol *kcontrol,
+			const unsigned int __user *bytes, unsigned int size);
 };
 
 /*
@@ -117,10 +119,16 @@ struct snd_soc_tplg_ops {
 	int (*widget_unload)(struct snd_soc_component *,
 		struct snd_soc_dobj *);
 
-	/* FE - used for any driver specific init */
-	int (*pcm_dai_load)(struct snd_soc_component *,
-		struct snd_soc_tplg_pcm_dai *pcm_dai, int num_fe);
-	int (*pcm_dai_unload)(struct snd_soc_component *,
+	/* FE DAI - used for any driver specific init */
+	int (*dai_load)(struct snd_soc_component *,
+		struct snd_soc_dai_driver *dai_drv);
+	int (*dai_unload)(struct snd_soc_component *,
+		struct snd_soc_dobj *);
+
+	/* DAI link - used for any driver specific init */
+	int (*link_load)(struct snd_soc_component *,
+		struct snd_soc_dai_link *link);
+	int (*link_unload)(struct snd_soc_component *,
 		struct snd_soc_dobj *);
 
 	/* callback to handle vendor bespoke data */
@@ -136,10 +144,16 @@ struct snd_soc_tplg_ops {
 	int (*manifest)(struct snd_soc_component *,
 		struct snd_soc_tplg_manifest *);
 
-	/* bespoke kcontrol handlers available for binding */
+	/* vendor specific kcontrol handlers available for binding */
 	const struct snd_soc_tplg_kcontrol_ops *io_ops;
 	int io_ops_count;
+
+	/* vendor specific bytes ext handlers available for binding */
+	const struct snd_soc_tplg_bytes_ext_ops *bytes_ext_ops;
+	int bytes_ext_ops_count;
 };
+
+#ifdef CONFIG_SND_SOC_TOPOLOGY
 
 /* gets a pointer to data from the firmware block header */
 static inline const void *snd_soc_tplg_get_data(struct snd_soc_tplg_hdr *hdr)
@@ -164,5 +178,15 @@ void snd_soc_tplg_widget_remove_all(struct snd_soc_dapm_context *dapm,
 int snd_soc_tplg_widget_bind_event(struct snd_soc_dapm_widget *w,
 	const struct snd_soc_tplg_widget_events *events, int num_events,
 	u16 event_type);
+
+#else
+
+static inline int snd_soc_tplg_component_remove(struct snd_soc_component *comp,
+						u32 index)
+{
+	return 0;
+}
+
+#endif
 
 #endif

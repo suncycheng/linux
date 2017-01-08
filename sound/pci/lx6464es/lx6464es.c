@@ -234,8 +234,8 @@ static int lx_pcm_open(struct snd_pcm_substream *substream)
 
 	/* the clock rate cannot be changed */
 	board_rate = chip->board_sample_rate;
-	err = snd_pcm_hw_constraint_minmax(runtime, SNDRV_PCM_HW_PARAM_RATE,
-					   board_rate, board_rate);
+	err = snd_pcm_hw_constraint_single(runtime, SNDRV_PCM_HW_PARAM_RATE,
+					   board_rate);
 
 	if (err < 0) {
 		dev_warn(chip->card->dev, "could not constrain periods\n");
@@ -804,7 +804,7 @@ mac_ready:
 	return err;
 }
 
-static struct snd_pcm_ops lx_ops_playback = {
+static const struct snd_pcm_ops lx_ops_playback = {
 	.open      = lx_pcm_open,
 	.close     = lx_pcm_close,
 	.ioctl     = snd_pcm_lib_ioctl,
@@ -815,7 +815,7 @@ static struct snd_pcm_ops lx_ops_playback = {
 	.pointer   = lx_pcm_stream_pointer,
 };
 
-static struct snd_pcm_ops lx_ops_capture = {
+static const struct snd_pcm_ops lx_ops_capture = {
 	.open      = lx_pcm_open,
 	.close     = lx_pcm_close,
 	.ioctl     = snd_pcm_lib_ioctl,

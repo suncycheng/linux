@@ -14,107 +14,72 @@
 #define __PMEM_H__
 
 #include <linux/io.h>
+#include <linux/uio.h>
 
 #ifdef CONFIG_ARCH_HAS_PMEM_API
-#include <asm/cacheflush.h>
+#define ARCH_MEMREMAP_PMEM MEMREMAP_WB
+#include <asm/pmem.h>
 #else
-static inline void arch_wmb_pmem(void)
+#define ARCH_MEMREMAP_PMEM MEMREMAP_WT
+/*
+ * These are simply here to enable compilation, all call sites gate
+ * calling these symbols with arch_has_pmem_api() and redirect to the
+ * implementation in asm/pmem.h.
+ */
+static inline void arch_memcpy_to_pmem(void *dst, const void *src, size_t n)
 {
 	BUG();
 }
 
-static inline bool __arch_has_wmb_pmem(void)
+static inline int arch_memcpy_from_pmem(void *dst, const void *src, size_t n)
 {
-	return false;
+	BUG();
+	return -EFAULT;
 }
 
-static inline void __pmem *arch_memremap_pmem(resource_size_t offset,
-		unsigned long size)
+static inline size_t arch_copy_from_iter_pmem(void *addr, size_t bytes,
+		struct iov_iter *i)
 {
-	return NULL;
+	BUG();
+	return 0;
 }
 
-static inline void arch_memcpy_to_pmem(void __pmem *dst, const void *src,
-		size_t n)
+static inline void arch_clear_pmem(void *addr, size_t size)
+{
+	BUG();
+}
+
+static inline void arch_wb_cache_pmem(void *addr, size_t size)
+{
+	BUG();
+}
+
+static inline void arch_invalidate_pmem(void *addr, size_t size)
 {
 	BUG();
 }
 #endif
 
-/*
- * Architectures that define ARCH_HAS_PMEM_API must provide
- * implementations for arch_memremap_pmem(), arch_memcpy_to_pmem(),
- * arch_wmb_pmem(), and __arch_has_wmb_pmem().
- */
-
-static inline void memcpy_from_pmem(void *dst, void __pmem const *src, size_t size)
-{
-	memcpy(dst, (void __force const *) src, size);
-}
-
-static inline void memunmap_pmem(void __pmem *addr)
-{
-	iounmap((void __force __iomem *) addr);
-}
-
-/**
- * arch_has_wmb_pmem - true if wmb_pmem() ensures durability
- *
- * For a given cpu implementation within an architecture it is possible
- * that wmb_pmem() resolves to a nop.  In the case this returns
- * false, pmem api users are unable to ensure durability and may want to
- * fall back to a different data consistency model, or otherwise notify
- * the user.
- */
-static inline bool arch_has_wmb_pmem(void)
-{
-	if (IS_ENABLED(CONFIG_ARCH_HAS_PMEM_API))
-		return __arch_has_wmb_pmem();
-	return false;
-}
-
 static inline bool arch_has_pmem_api(void)
 {
-	return IS_ENABLED(CONFIG_ARCH_HAS_PMEM_API) && arch_has_wmb_pmem();
+	return IS_ENABLED(CONFIG_ARCH_HAS_PMEM_API);
 }
 
 /*
- * These defaults seek to offer decent performance and minimize the
- * window between i/o completion and writes being durable on media.
- * However, it is undefined / architecture specific whether
- * default_memremap_pmem + default_memcpy_to_pmem is sufficient for
- * making data durable relative to i/o completion.
- */
-static void default_memcpy_to_pmem(void __pmem *dst, const void *src,
-		size_t size)
-{
-	memcpy((void __force *) dst, src, size);
-}
-
-static void __pmem *default_memremap_pmem(resource_size_t offset,
-		unsigned long size)
-{
-	return (void __pmem __force *)ioremap_wt(offset, size);
-}
-
-/**
- * memremap_pmem - map physical persistent memory for pmem api
- * @offset: physical address of persistent memory
- * @size: size of the mapping
+ * memcpy_from_pmem - read from persistent memory with error handling
+ * @dst: destination buffer
+ * @src: source buffer
+ * @size: transfer length
  *
- * Establish a mapping of the architecture specific memory type expected
- * by memcpy_to_pmem() and wmb_pmem().  For example, it may be
- * the case that an uncacheable or writethrough mapping is sufficient,
- * or a writeback mapping provided memcpy_to_pmem() and
- * wmb_pmem() arrange for the data to be written through the
- * cache to persistent media.
+ * Returns 0 on success negative error code on failure.
  */
-static inline void __pmem *memremap_pmem(resource_size_t offset,
-		unsigned long size)
+static inline int memcpy_from_pmem(void *dst, void const *src, size_t size)
 {
 	if (arch_has_pmem_api())
-		return arch_memremap_pmem(offset, size);
-	return default_memremap_pmem(offset, size);
+		return arch_memcpy_from_pmem(dst, src, size);
+	else
+		memcpy(dst, src, size);
+	return 0;
 }
 
 /**
@@ -127,26 +92,74 @@ static inline void __pmem *memremap_pmem(resource_size_t offset,
  * being effectively evicted from, or never written to, the processor
  * cache hierarchy after the copy completes.  After memcpy_to_pmem()
  * data may still reside in cpu or platform buffers, so this operation
- * must be followed by a wmb_pmem().
+ * must be followed by a blkdev_issue_flush() on the pmem block device.
  */
-static inline void memcpy_to_pmem(void __pmem *dst, const void *src, size_t n)
+static inline void memcpy_to_pmem(void *dst, const void *src, size_t n)
 {
 	if (arch_has_pmem_api())
 		arch_memcpy_to_pmem(dst, src, n);
 	else
-		default_memcpy_to_pmem(dst, src, n);
+		memcpy(dst, src, n);
 }
 
 /**
- * wmb_pmem - synchronize writes to persistent memory
+ * copy_from_iter_pmem - copy data from an iterator to PMEM
+ * @addr:	PMEM destination address
+ * @bytes:	number of bytes to copy
+ * @i:		iterator with source data
  *
- * After a series of memcpy_to_pmem() operations this drains data from
- * cpu write buffers and any platform (memory controller) buffers to
- * ensure that written data is durable on persistent memory media.
+ * Copy data from the iterator 'i' to the PMEM buffer starting at 'addr'.
+ * See blkdev_issue_flush() note for memcpy_to_pmem().
  */
-static inline void wmb_pmem(void)
+static inline size_t copy_from_iter_pmem(void *addr, size_t bytes,
+		struct iov_iter *i)
 {
 	if (arch_has_pmem_api())
-		arch_wmb_pmem();
+		return arch_copy_from_iter_pmem(addr, bytes, i);
+	return copy_from_iter_nocache(addr, bytes, i);
+}
+
+/**
+ * clear_pmem - zero a PMEM memory range
+ * @addr:	virtual start address
+ * @size:	number of bytes to zero
+ *
+ * Write zeros into the memory range starting at 'addr' for 'size' bytes.
+ * See blkdev_issue_flush() note for memcpy_to_pmem().
+ */
+static inline void clear_pmem(void *addr, size_t size)
+{
+	if (arch_has_pmem_api())
+		arch_clear_pmem(addr, size);
+	else
+		memset(addr, 0, size);
+}
+
+/**
+ * invalidate_pmem - flush a pmem range from the cache hierarchy
+ * @addr:	virtual start address
+ * @size:	bytes to invalidate (internally aligned to cache line size)
+ *
+ * For platforms that support clearing poison this flushes any poisoned
+ * ranges out of the cache
+ */
+static inline void invalidate_pmem(void *addr, size_t size)
+{
+	if (arch_has_pmem_api())
+		arch_invalidate_pmem(addr, size);
+}
+
+/**
+ * wb_cache_pmem - write back processor cache for PMEM memory range
+ * @addr:	virtual start address
+ * @size:	number of bytes to write back
+ *
+ * Write back the processor cache range starting at 'addr' for 'size' bytes.
+ * See blkdev_issue_flush() note for memcpy_to_pmem().
+ */
+static inline void wb_cache_pmem(void *addr, size_t size)
+{
+	if (arch_has_pmem_api())
+		arch_wb_cache_pmem(addr, size);
 }
 #endif /* __PMEM_H__ */

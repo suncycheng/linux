@@ -20,7 +20,6 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
-#include <linux/dma-mapping.h>
 #include <linux/clk.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/usb_phy_generic.h>
@@ -117,22 +116,7 @@ static int dwc3_exynos_probe(struct platform_device *pdev)
 	if (!exynos)
 		return -ENOMEM;
 
-	/*
-	 * Right now device-tree probed devices don't get dma_mask set.
-	 * Since shared usb code relies on it, set it here for now.
-	 * Once we move to full device tree support this will vanish off.
-	 */
-	ret = dma_coerce_mask_and_coherent(dev, DMA_BIT_MASK(32));
-	if (ret)
-		return ret;
-
 	platform_set_drvdata(pdev, exynos);
-
-	ret = dwc3_exynos_register_phys(exynos);
-	if (ret) {
-		dev_err(dev, "couldn't register PHYs\n");
-		return ret;
-	}
 
 	exynos->dev	= dev;
 
@@ -145,7 +129,7 @@ static int dwc3_exynos_probe(struct platform_device *pdev)
 
 	exynos->susp_clk = devm_clk_get(dev, "usbdrd30_susp_clk");
 	if (IS_ERR(exynos->susp_clk)) {
-		dev_dbg(dev, "no suspend clk specified\n");
+		dev_info(dev, "no suspend clk specified\n");
 		exynos->susp_clk = NULL;
 	}
 	clk_prepare_enable(exynos->susp_clk);
@@ -183,20 +167,29 @@ static int dwc3_exynos_probe(struct platform_device *pdev)
 		goto err3;
 	}
 
+	ret = dwc3_exynos_register_phys(exynos);
+	if (ret) {
+		dev_err(dev, "couldn't register PHYs\n");
+		goto err4;
+	}
+
 	if (node) {
 		ret = of_platform_populate(node, NULL, NULL, dev);
 		if (ret) {
 			dev_err(dev, "failed to add dwc3 core\n");
-			goto err4;
+			goto err5;
 		}
 	} else {
 		dev_err(dev, "no device node, failed to add dwc3 core\n");
 		ret = -ENODEV;
-		goto err4;
+		goto err5;
 	}
 
 	return 0;
 
+err5:
+	platform_device_unregister(exynos->usb2_phy);
+	platform_device_unregister(exynos->usb3_phy);
 err4:
 	regulator_disable(exynos->vdd10);
 err3:

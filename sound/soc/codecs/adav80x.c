@@ -113,7 +113,7 @@
 
 #define ADAV80X_PLL_OUTE_SYSCLKPD(x)		BIT(2 - (x))
 
-static struct reg_default adav80x_reg_defaults[] = {
+static const struct reg_default adav80x_reg_defaults[] = {
 	{ ADAV80X_PLAYBACK_CTRL,	0x01 },
 	{ ADAV80X_AUX_IN_CTRL,		0x01 },
 	{ ADAV80X_REC_CTRL,		0x02 },
@@ -728,8 +728,8 @@ static int adav80x_dai_startup(struct snd_pcm_substream *substream,
 	if (!snd_soc_codec_is_active(codec) || !adav80x->rate)
 		return 0;
 
-	return snd_pcm_hw_constraint_minmax(substream->runtime,
-			SNDRV_PCM_HW_PARAM_RATE, adav80x->rate, adav80x->rate);
+	return snd_pcm_hw_constraint_single(substream->runtime,
+			SNDRV_PCM_HW_PARAM_RATE, adav80x->rate);
 }
 
 static void adav80x_dai_shutdown(struct snd_pcm_substream *substream,
@@ -834,12 +834,14 @@ static struct snd_soc_codec_driver adav80x_codec_driver = {
 	.set_pll = adav80x_set_pll,
 	.set_sysclk = adav80x_set_sysclk,
 
-	.controls = adav80x_controls,
-	.num_controls = ARRAY_SIZE(adav80x_controls),
-	.dapm_widgets = adav80x_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(adav80x_dapm_widgets),
-	.dapm_routes = adav80x_dapm_routes,
-	.num_dapm_routes = ARRAY_SIZE(adav80x_dapm_routes),
+	.component_driver = {
+		.controls		= adav80x_controls,
+		.num_controls		= ARRAY_SIZE(adav80x_controls),
+		.dapm_widgets		= adav80x_dapm_widgets,
+		.num_dapm_widgets	= ARRAY_SIZE(adav80x_dapm_widgets),
+		.dapm_routes		= adav80x_dapm_routes,
+		.num_dapm_routes	= ARRAY_SIZE(adav80x_dapm_routes),
+	},
 };
 
 int adav80x_bus_probe(struct device *dev, struct regmap *regmap)
@@ -865,7 +867,6 @@ const struct regmap_config adav80x_regmap_config = {
 	.val_bits = 8,
 	.pad_bits = 1,
 	.reg_bits = 7,
-	.read_flag_mask = 0x01,
 
 	.max_register = ADAV80X_PLL_OUTE,
 

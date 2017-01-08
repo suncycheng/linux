@@ -17,7 +17,7 @@
 	model = "Buffalo WZR-600DHP2 (BCM47081)";
 
 	chosen {
-		bootargs = "console=ttyS0,115200";
+		bootargs = "console=ttyS0,115200 earlycon";
 	};
 
 	memory {
@@ -121,4 +121,8 @@
 			gpios = <&chipcommon 15 GPIO_ACTIVE_LOW>;
 		};
 	};
+};
+
+&uart0 {
+	status = "okay";
 };

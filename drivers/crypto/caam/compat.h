@@ -23,6 +23,7 @@
 #include <linux/types.h>
 #include <linux/debugfs.h>
 #include <linux/circ_buf.h>
+#include <linux/clk.h>
 #include <net/xfrm.h>
 
 #include <crypto/algapi.h>
@@ -34,8 +35,11 @@
 #include <crypto/md5.h>
 #include <crypto/internal/aead.h>
 #include <crypto/authenc.h>
+#include <crypto/akcipher.h>
 #include <crypto/scatterwalk.h>
 #include <crypto/internal/skcipher.h>
 #include <crypto/internal/hash.h>
+#include <crypto/internal/rsa.h>
+#include <crypto/internal/akcipher.h>
 
 #endif /* !defined(CAAM_COMPAT_H) */

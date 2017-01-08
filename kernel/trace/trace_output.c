@@ -322,8 +322,8 @@ seq_print_sym_offset(struct trace_seq *s, const char *fmt,
 # define IP_FMT "%016lx"
 #endif
 
-int seq_print_user_ip(struct trace_seq *s, struct mm_struct *mm,
-		      unsigned long ip, unsigned long sym_flags)
+static int seq_print_user_ip(struct trace_seq *s, struct mm_struct *mm,
+			     unsigned long ip, unsigned long sym_flags)
 {
 	struct file *file = NULL;
 	unsigned long vmstart = 0;
@@ -351,50 +351,6 @@ int seq_print_user_ip(struct trace_seq *s, struct mm_struct *mm,
 	}
 	if (ret && ((sym_flags & TRACE_ITER_SYM_ADDR) || !file))
 		trace_seq_printf(s, " <" IP_FMT ">", ip);
-	return !trace_seq_has_overflowed(s);
-}
-
-int
-seq_print_userip_objs(const struct userstack_entry *entry, struct trace_seq *s,
-		      unsigned long sym_flags)
-{
-	struct mm_struct *mm = NULL;
-	unsigned int i;
-
-	if (trace_flags & TRACE_ITER_SYM_USEROBJ) {
-		struct task_struct *task;
-		/*
-		 * we do the lookup on the thread group leader,
-		 * since individual threads might have already quit!
-		 */
-		rcu_read_lock();
-		task = find_task_by_vpid(entry->tgid);
-		if (task)
-			mm = get_task_mm(task);
-		rcu_read_unlock();
-	}
-
-	for (i = 0; i < FTRACE_STACK_ENTRIES; i++) {
-		unsigned long ip = entry->caller[i];
-
-		if (ip == ULONG_MAX || trace_seq_has_overflowed(s))
-			break;
-
-		trace_seq_puts(s, " => ");
-
-		if (!ip) {
-			trace_seq_puts(s, "??");
-			trace_seq_putc(s, '\n');
-			continue;
-		}
-
-		seq_print_user_ip(s, mm, ip, sym_flags);
-		trace_seq_putc(s, '\n');
-	}
-
-	if (mm)
-		mmput(mm);
-
 	return !trace_seq_has_overflowed(s);
 }
 
@@ -433,7 +389,9 @@ int trace_print_lat_fmt(struct trace_seq *s, struct trace_entry *entry)
 	char irqs_off;
 	int hardirq;
 	int softirq;
+	int nmi;
 
+	nmi = entry->flags & TRACE_FLAG_NMI;
 	hardirq = entry->flags & TRACE_FLAG_HARDIRQ;
 	softirq = entry->flags & TRACE_FLAG_SOFTIRQ;
 
@@ -459,10 +417,12 @@ int trace_print_lat_fmt(struct trace_seq *s, struct trace_entry *entry)
 	}
 
 	hardsoft_irq =
+		(nmi && hardirq)     ? 'Z' :
+		nmi                  ? 'z' :
 		(hardirq && softirq) ? 'H' :
-		hardirq ? 'h' :
-		softirq ? 's' :
-		'.';
+		hardirq              ? 'h' :
+		softirq              ? 's' :
+		                       '.' ;
 
 	trace_seq_printf(s, "%c%c%c",
 			 irqs_off, need_resched, hardsoft_irq);
@@ -496,6 +456,8 @@ static const struct trace_mark {
 	char			sym;
 } mark[] = {
 	MARK(1000000000ULL	, '$'), /* 1 sec */
+	MARK(100000000ULL	, '@'), /* 100 msec */
+	MARK(10000000ULL	, '*'), /* 10 msec */
 	MARK(1000000ULL		, '#'), /* 1000 usecs */
 	MARK(100000ULL		, '!'), /* 100 usecs */
 	MARK(10000ULL		, '+'), /* 10 usecs */
@@ -508,7 +470,7 @@ char trace_find_mark(unsigned long long d)
 	int size = ARRAY_SIZE(mark);
 
 	for (i = 0; i < size; i++) {
-		if (d >= mark[i].val)
+		if (d > mark[i].val)
 			break;
 	}
 
@@ -518,7 +480,8 @@ char trace_find_mark(unsigned long long d)
 static int
 lat_print_timestamp(struct trace_iterator *iter, u64 next_ts)
 {
-	unsigned long verbose = trace_flags & TRACE_ITER_VERBOSE;
+	struct trace_array *tr = iter->tr;
+	unsigned long verbose = tr->trace_flags & TRACE_ITER_VERBOSE;
 	unsigned long in_ns = iter->iter_flags & TRACE_FILE_TIME_IN_NS;
 	unsigned long long abs_ts = iter->ts - iter->trace_buffer->time_start;
 	unsigned long long rel_ts = next_ts - iter->ts;
@@ -561,6 +524,7 @@ lat_print_timestamp(struct trace_iterator *iter, u64 next_ts)
 
 int trace_print_context(struct trace_iterator *iter)
 {
+	struct trace_array *tr = iter->tr;
 	struct trace_seq *s = &iter->seq;
 	struct trace_entry *entry = iter->ent;
 	unsigned long long t;
@@ -572,7 +536,7 @@ int trace_print_context(struct trace_iterator *iter)
 	trace_seq_printf(s, "%16s-%-5d [%03d] ",
 			       comm, entry->pid, iter->cpu);
 
-	if (trace_flags & TRACE_ITER_IRQ_INFO)
+	if (tr->trace_flags & TRACE_ITER_IRQ_INFO)
 		trace_print_lat_fmt(s, entry);
 
 	if (iter->iter_flags & TRACE_FILE_TIME_IN_NS) {
@@ -588,14 +552,15 @@ int trace_print_context(struct trace_iterator *iter)
 
 int trace_print_lat_context(struct trace_iterator *iter)
 {
-	u64 next_ts;
+	struct trace_array *tr = iter->tr;
 	/* trace_find_next_entry will reset ent_size */
 	int ent_size = iter->ent_size;
 	struct trace_seq *s = &iter->seq;
+	u64 next_ts;
 	struct trace_entry *entry = iter->ent,
 			   *next_entry = trace_find_next_entry(iter, NULL,
 							       &next_ts);
-	unsigned long verbose = (trace_flags & TRACE_ITER_VERBOSE);
+	unsigned long verbose = (tr->trace_flags & TRACE_ITER_VERBOSE);
 
 	/* Restore the original ent_size */
 	iter->ent_size = ent_size;
@@ -1077,13 +1042,49 @@ static struct trace_event trace_stack_event = {
 static enum print_line_t trace_user_stack_print(struct trace_iterator *iter,
 						int flags, struct trace_event *event)
 {
+	struct trace_array *tr = iter->tr;
 	struct userstack_entry *field;
 	struct trace_seq *s = &iter->seq;
+	struct mm_struct *mm = NULL;
+	unsigned int i;
 
 	trace_assign_type(field, iter->ent);
 
 	trace_seq_puts(s, "<user stack trace>\n");
-	seq_print_userip_objs(field, s, flags);
+
+	if (tr->trace_flags & TRACE_ITER_SYM_USEROBJ) {
+		struct task_struct *task;
+		/*
+		 * we do the lookup on the thread group leader,
+		 * since individual threads might have already quit!
+		 */
+		rcu_read_lock();
+		task = find_task_by_vpid(field->tgid);
+		if (task)
+			mm = get_task_mm(task);
+		rcu_read_unlock();
+	}
+
+	for (i = 0; i < FTRACE_STACK_ENTRIES; i++) {
+		unsigned long ip = field->caller[i];
+
+		if (ip == ULONG_MAX || trace_seq_has_overflowed(s))
+			break;
+
+		trace_seq_puts(s, " => ");
+
+		if (!ip) {
+			trace_seq_puts(s, "??");
+			trace_seq_putc(s, '\n');
+			continue;
+		}
+
+		seq_print_user_ip(s, mm, ip, flags);
+		trace_seq_putc(s, '\n');
+	}
+
+	if (mm)
+		mmput(mm);
 
 	return trace_handle_return(s);
 }
@@ -1095,6 +1096,71 @@ static struct trace_event_functions trace_user_stack_funcs = {
 static struct trace_event trace_user_stack_event = {
 	.type		= TRACE_USER_STACK,
 	.funcs		= &trace_user_stack_funcs,
+};
+
+/* TRACE_HWLAT */
+static enum print_line_t
+trace_hwlat_print(struct trace_iterator *iter, int flags,
+		  struct trace_event *event)
+{
+	struct trace_entry *entry = iter->ent;
+	struct trace_seq *s = &iter->seq;
+	struct hwlat_entry *field;
+
+	trace_assign_type(field, entry);
+
+	trace_seq_printf(s, "#%-5u inner/outer(us): %4llu/%-5llu ts:%ld.%09ld",
+			 field->seqnum,
+			 field->duration,
+			 field->outer_duration,
+			 field->timestamp.tv_sec,
+			 field->timestamp.tv_nsec);
+
+	if (field->nmi_count) {
+		/*
+		 * The generic sched_clock() is not NMI safe, thus
+		 * we only record the count and not the time.
+		 */
+		if (!IS_ENABLED(CONFIG_GENERIC_SCHED_CLOCK))
+			trace_seq_printf(s, " nmi-total:%llu",
+					 field->nmi_total_ts);
+		trace_seq_printf(s, " nmi-count:%u",
+				 field->nmi_count);
+	}
+
+	trace_seq_putc(s, '\n');
+
+	return trace_handle_return(s);
+}
+
+
+static enum print_line_t
+trace_hwlat_raw(struct trace_iterator *iter, int flags,
+		struct trace_event *event)
+{
+	struct hwlat_entry *field;
+	struct trace_seq *s = &iter->seq;
+
+	trace_assign_type(field, iter->ent);
+
+	trace_seq_printf(s, "%llu %lld %ld %09ld %u\n",
+			 field->duration,
+			 field->outer_duration,
+			 field->timestamp.tv_sec,
+			 field->timestamp.tv_nsec,
+			 field->seqnum);
+
+	return trace_handle_return(s);
+}
+
+static struct trace_event_functions trace_hwlat_funcs = {
+	.trace		= trace_hwlat_print,
+	.raw		= trace_hwlat_raw,
+};
+
+static struct trace_event trace_hwlat_event = {
+	.type		= TRACE_HWLAT,
+	.funcs		= &trace_hwlat_funcs,
 };
 
 /* TRACE_BPUTS */
@@ -1222,6 +1288,35 @@ static struct trace_event trace_print_event = {
 	.funcs		= &trace_print_funcs,
 };
 
+static enum print_line_t trace_raw_data(struct trace_iterator *iter, int flags,
+					 struct trace_event *event)
+{
+	struct raw_data_entry *field;
+	int i;
+
+	trace_assign_type(field, iter->ent);
+
+	trace_seq_printf(&iter->seq, "# %x buf:", field->id);
+
+	for (i = 0; i < iter->ent_size - offsetof(struct raw_data_entry, buf); i++)
+		trace_seq_printf(&iter->seq, " %02x",
+				 (unsigned char)field->buf[i]);
+
+	trace_seq_putc(&iter->seq, '\n');
+
+	return trace_handle_return(&iter->seq);
+}
+
+static struct trace_event_functions trace_raw_data_funcs = {
+	.trace		= trace_raw_data,
+	.raw		= trace_raw_data,
+};
+
+static struct trace_event trace_raw_data_event = {
+	.type	 	= TRACE_RAW_DATA,
+	.funcs		= &trace_raw_data_funcs,
+};
+
 
 static struct trace_event *events[] __initdata = {
 	&trace_fn_event,
@@ -1232,6 +1327,8 @@ static struct trace_event *events[] __initdata = {
 	&trace_bputs_event,
 	&trace_bprint_event,
 	&trace_print_event,
+	&trace_hwlat_event,
+	&trace_raw_data_event,
 	NULL
 };
 

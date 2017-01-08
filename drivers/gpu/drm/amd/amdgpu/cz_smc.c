@@ -29,6 +29,8 @@
 #include "cz_smumgr.h"
 #include "smu_ucode_xfer_cz.h"
 #include "amdgpu_ucode.h"
+#include "cz_dpm.h"
+#include "vi_dpm.h"
 
 #include "smu/smu_8_0_d.h"
 #include "smu/smu_8_0_sh_mask.h"
@@ -48,7 +50,7 @@ static struct cz_smu_private_data *cz_smu_get_priv(struct amdgpu_device *adev)
 	return priv;
 }
 
-int cz_send_msg_to_smc_async(struct amdgpu_device *adev, u16 msg)
+static int cz_send_msg_to_smc_async(struct amdgpu_device *adev, u16 msg)
 {
 	int i;
 	u32 content = 0, tmp;
@@ -99,13 +101,6 @@ int cz_send_msg_to_smc(struct amdgpu_device *adev, u16 msg)
 	return 0;
 }
 
-int cz_send_msg_to_smc_with_parameter_async(struct amdgpu_device *adev,
-						u16 msg, u32 parameter)
-{
-	WREG32(mmSMU_MP1_SRBM2P_ARG_0, parameter);
-	return cz_send_msg_to_smc_async(adev, msg);
-}
-
 int cz_send_msg_to_smc_with_parameter(struct amdgpu_device *adev,
 						u16 msg, u32 parameter)
 {
@@ -140,7 +135,7 @@ int cz_read_smc_sram_dword(struct amdgpu_device *adev, u32 smc_address,
 	return 0;
 }
 
-int cz_write_smc_sram_dword(struct amdgpu_device *adev, u32 smc_address,
+static int cz_write_smc_sram_dword(struct amdgpu_device *adev, u32 smc_address,
 						u32 value, u32 limit)
 {
 	int ret;
@@ -312,13 +307,16 @@ int cz_smu_start(struct amdgpu_device *adev)
 				UCODE_ID_CP_MEC_JT1_MASK |
 				UCODE_ID_CP_MEC_JT2_MASK;
 
+	if (adev->asic_type == CHIP_STONEY)
+		fw_to_check &= ~(UCODE_ID_SDMA1_MASK | UCODE_ID_CP_MEC_JT2_MASK);
+
 	cz_smu_request_load_fw(adev);
 	ret = cz_smu_check_fw_load_finish(adev, fw_to_check);
 	if (ret)
 		return ret;
 
 	/* manually load MEC firmware for CZ */
-	if (adev->asic_type == CHIP_CARRIZO) {
+	if (adev->asic_type == CHIP_CARRIZO || adev->asic_type == CHIP_STONEY) {
 		ret = cz_load_mec_firmware(adev);
 		if (ret) {
 			dev_err(adev->dev, "(%d) Mec Firmware load failed\n", ret);
@@ -335,6 +333,9 @@ int cz_smu_start(struct amdgpu_device *adev)
 				AMDGPU_CPMEC1_UCODE_LOADED |
 				AMDGPU_CPMEC2_UCODE_LOADED |
 				AMDGPU_CPRLC_UCODE_LOADED;
+
+	if (adev->asic_type == CHIP_STONEY)
+		adev->smu.fw_flags &= ~(AMDGPU_SDMA1_UCODE_LOADED | AMDGPU_CPMEC2_UCODE_LOADED);
 
 	return ret;
 }
@@ -601,8 +602,13 @@ static int cz_smu_construct_toc_for_vddgfx_exit(struct amdgpu_device *adev)
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_ME, false);
 		cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT1, false);
-		cz_smu_populate_single_ucode_load_task(adev,
+		if (adev->asic_type == CHIP_STONEY) {
+			cz_smu_populate_single_ucode_load_task(adev,
+				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT1, false);
+		} else {
+			cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT2, false);
+		}
 		cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_RLC_G, false);
 	}
@@ -642,8 +648,13 @@ static int cz_smu_construct_toc_for_bootup(struct amdgpu_device *adev)
 	if (adev->firmware.smu_load) {
 		cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_SDMA0, false);
-		cz_smu_populate_single_ucode_load_task(adev,
+		if (adev->asic_type == CHIP_STONEY) {
+			cz_smu_populate_single_ucode_load_task(adev,
+				CZ_SCRATCH_ENTRY_UCODE_ID_SDMA0, false);
+		} else {
+			cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_SDMA1, false);
+		}
 		cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_CE, false);
 		cz_smu_populate_single_ucode_load_task(adev,
@@ -652,8 +663,13 @@ static int cz_smu_construct_toc_for_bootup(struct amdgpu_device *adev)
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_ME, false);
 		cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT1, false);
-		cz_smu_populate_single_ucode_load_task(adev,
+		if (adev->asic_type == CHIP_STONEY) {
+			cz_smu_populate_single_ucode_load_task(adev,
+				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT1, false);
+		} else {
+			cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT2, false);
+		}
 		cz_smu_populate_single_ucode_load_task(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_RLC_G, true);
 	}
@@ -814,7 +830,8 @@ int cz_smu_init(struct amdgpu_device *adev)
 	* 3. map kernel virtual address
 	*/
 	ret = amdgpu_bo_create(adev, priv->toc_buffer.data_size, PAGE_SIZE,
-				true, AMDGPU_GEM_DOMAIN_GTT, 0, NULL, toc_buf);
+			       true, AMDGPU_GEM_DOMAIN_GTT, 0, NULL, NULL,
+			       toc_buf);
 
 	if (ret) {
 		dev_err(adev->dev, "(%d) SMC TOC buffer allocation failed\n", ret);
@@ -822,7 +839,8 @@ int cz_smu_init(struct amdgpu_device *adev)
 	}
 
 	ret = amdgpu_bo_create(adev, priv->smu_buffer.data_size, PAGE_SIZE,
-				true, AMDGPU_GEM_DOMAIN_GTT, 0, NULL, smu_buf);
+			       true, AMDGPU_GEM_DOMAIN_GTT, 0, NULL, NULL,
+			       smu_buf);
 
 	if (ret) {
 		dev_err(adev->dev, "(%d) SMC Internal buffer allocation failed\n", ret);
@@ -886,10 +904,18 @@ int cz_smu_init(struct amdgpu_device *adev)
 				CZ_SCRATCH_ENTRY_UCODE_ID_SDMA0,
 				&priv->driver_buffer[priv->driver_buffer_length++]))
 			goto smu_init_failed;
-		if (cz_smu_populate_single_firmware_entry(adev,
-				CZ_SCRATCH_ENTRY_UCODE_ID_SDMA1,
-				&priv->driver_buffer[priv->driver_buffer_length++]))
-			goto smu_init_failed;
+
+		if (adev->asic_type == CHIP_STONEY) {
+			if (cz_smu_populate_single_firmware_entry(adev,
+					CZ_SCRATCH_ENTRY_UCODE_ID_SDMA0,
+					&priv->driver_buffer[priv->driver_buffer_length++]))
+				goto smu_init_failed;
+		} else {
+			if (cz_smu_populate_single_firmware_entry(adev,
+					CZ_SCRATCH_ENTRY_UCODE_ID_SDMA1,
+					&priv->driver_buffer[priv->driver_buffer_length++]))
+				goto smu_init_failed;
+		}
 		if (cz_smu_populate_single_firmware_entry(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_CE,
 				&priv->driver_buffer[priv->driver_buffer_length++]))
@@ -906,10 +932,17 @@ int cz_smu_init(struct amdgpu_device *adev)
 				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT1,
 				&priv->driver_buffer[priv->driver_buffer_length++]))
 			goto smu_init_failed;
-		if (cz_smu_populate_single_firmware_entry(adev,
-				CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT2,
-				&priv->driver_buffer[priv->driver_buffer_length++]))
-			goto smu_init_failed;
+		if (adev->asic_type == CHIP_STONEY) {
+			if (cz_smu_populate_single_firmware_entry(adev,
+					CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT1,
+					&priv->driver_buffer[priv->driver_buffer_length++]))
+				goto smu_init_failed;
+		} else {
+			if (cz_smu_populate_single_firmware_entry(adev,
+					CZ_SCRATCH_ENTRY_UCODE_ID_CP_MEC_JT2,
+					&priv->driver_buffer[priv->driver_buffer_length++]))
+				goto smu_init_failed;
+		}
 		if (cz_smu_populate_single_firmware_entry(adev,
 				CZ_SCRATCH_ENTRY_UCODE_ID_RLC_G,
 				&priv->driver_buffer[priv->driver_buffer_length++]))

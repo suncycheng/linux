@@ -81,7 +81,7 @@ probe_likely_condition(struct ftrace_branch_data *f, int val, int expect)
 	entry->correct = val == expect;
 
 	if (!call_filter_check_discard(call, entry, buffer, event))
-		__buffer_unlock_commit(buffer, event);
+		trace_buffer_unlock_commit_nostack(buffer, event);
 
  out:
 	current->trace_recursion &= ~TRACE_BRANCH_BIT;
@@ -125,25 +125,14 @@ void disable_branch_tracing(void)
 	mutex_unlock(&branch_tracing_mutex);
 }
 
-static void start_branch_trace(struct trace_array *tr)
-{
-	enable_branch_tracing(tr);
-}
-
-static void stop_branch_trace(struct trace_array *tr)
-{
-	disable_branch_tracing();
-}
-
 static int branch_trace_init(struct trace_array *tr)
 {
-	start_branch_trace(tr);
-	return 0;
+	return enable_branch_tracing(tr);
 }
 
 static void branch_trace_reset(struct trace_array *tr)
 {
-	stop_branch_trace(tr);
+	disable_branch_tracing();
 }
 
 static enum print_line_t trace_branch_print(struct trace_iterator *iter,

@@ -6,7 +6,7 @@
  *
  * License 1: GPLv2
  *
- * Copyright (c) 2014 Advanced Micro Devices, Inc.
+ * Copyright (c) 2014-2016 Advanced Micro Devices, Inc.
  *
  * This file is free software; you may copy, redistribute and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -56,7 +56,7 @@
  *
  * License 2: Modified BSD
  *
- * Copyright (c) 2014 Advanced Micro Devices, Inc.
+ * Copyright (c) 2014-2016 Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -114,7 +114,7 @@
  *     THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/platform_device.h>
+#include <linux/module.h>
 #include <linux/spinlock.h>
 #include <linux/tcp.h>
 #include <linux/if_vlan.h>
@@ -127,8 +127,35 @@
 #include "xgbe.h"
 #include "xgbe-common.h"
 
+static unsigned int ecc_sec_info_threshold = 10;
+static unsigned int ecc_sec_warn_threshold = 10000;
+static unsigned int ecc_sec_period = 600;
+static unsigned int ecc_ded_threshold = 2;
+static unsigned int ecc_ded_period = 600;
+
+#ifdef CONFIG_AMD_XGBE_HAVE_ECC
+/* Only expose the ECC parameters if supported */
+module_param(ecc_sec_info_threshold, uint, S_IWUSR | S_IRUGO);
+MODULE_PARM_DESC(ecc_sec_info_threshold,
+		 " ECC corrected error informational threshold setting");
+
+module_param(ecc_sec_warn_threshold, uint, S_IWUSR | S_IRUGO);
+MODULE_PARM_DESC(ecc_sec_warn_threshold,
+		 " ECC corrected error warning threshold setting");
+
+module_param(ecc_sec_period, uint, S_IWUSR | S_IRUGO);
+MODULE_PARM_DESC(ecc_sec_period, " ECC corrected error period (in seconds)");
+
+module_param(ecc_ded_threshold, uint, S_IWUSR | S_IRUGO);
+MODULE_PARM_DESC(ecc_ded_threshold, " ECC detected error threshold setting");
+
+module_param(ecc_ded_period, uint, S_IWUSR | S_IRUGO);
+MODULE_PARM_DESC(ecc_ded_period, " ECC detected error period (in seconds)");
+#endif
+
 static int xgbe_one_poll(struct napi_struct *, int);
 static int xgbe_all_poll(struct napi_struct *, int);
+static void xgbe_stop(struct xgbe_prv_data *);
 
 static int xgbe_alloc_channels(struct xgbe_prv_data *pdata)
 {
@@ -154,24 +181,14 @@ static int xgbe_alloc_channels(struct xgbe_prv_data *pdata)
 		goto err_rx_ring;
 
 	for (i = 0, channel = channel_mem; i < count; i++, channel++) {
-		snprintf(channel->name, sizeof(channel->name), "channel-%d", i);
+		snprintf(channel->name, sizeof(channel->name), "channel-%u", i);
 		channel->pdata = pdata;
 		channel->queue_index = i;
 		channel->dma_regs = pdata->xgmac_regs + DMA_CH_BASE +
 				    (DMA_CH_INC * i);
 
-		if (pdata->per_channel_irq) {
-			/* Get the DMA interrupt (offset 1) */
-			ret = platform_get_irq(pdata->pdev, i + 1);
-			if (ret < 0) {
-				netdev_err(pdata->netdev,
-					   "platform_get_irq %u failed\n",
-					   i + 1);
-				goto err_irq;
-			}
-
-			channel->dma_irq = ret;
-		}
+		if (pdata->per_channel_irq)
+			channel->dma_irq = pdata->channel_irq[i];
 
 		if (i < pdata->tx_ring_count) {
 			spin_lock_init(&tx_ring->lock);
@@ -193,9 +210,6 @@ static int xgbe_alloc_channels(struct xgbe_prv_data *pdata)
 	pdata->channel_count = count;
 
 	return 0;
-
-err_irq:
-	kfree(rx_ring);
 
 err_rx_ring:
 	kfree(tx_ring);
@@ -257,11 +271,6 @@ static int xgbe_calc_rx_buf_size(struct net_device *netdev, unsigned int mtu)
 {
 	unsigned int rx_buf_size;
 
-	if (mtu > XGMAC_JUMBO_PACKET_MTU) {
-		netdev_alert(netdev, "MTU exceeds maximum supported value\n");
-		return -EINVAL;
-	}
-
 	rx_buf_size = mtu + ETH_HLEN + ETH_FCS_LEN + VLAN_HLEN;
 	rx_buf_size = clamp_val(rx_buf_size, XGBE_RX_MIN_BUF_SIZE, PAGE_SIZE);
 
@@ -271,48 +280,161 @@ static int xgbe_calc_rx_buf_size(struct net_device *netdev, unsigned int mtu)
 	return rx_buf_size;
 }
 
-static void xgbe_enable_rx_tx_ints(struct xgbe_prv_data *pdata)
+static void xgbe_enable_rx_tx_int(struct xgbe_prv_data *pdata,
+				  struct xgbe_channel *channel)
 {
 	struct xgbe_hw_if *hw_if = &pdata->hw_if;
-	struct xgbe_channel *channel;
 	enum xgbe_int int_id;
+
+	if (channel->tx_ring && channel->rx_ring)
+		int_id = XGMAC_INT_DMA_CH_SR_TI_RI;
+	else if (channel->tx_ring)
+		int_id = XGMAC_INT_DMA_CH_SR_TI;
+	else if (channel->rx_ring)
+		int_id = XGMAC_INT_DMA_CH_SR_RI;
+	else
+		return;
+
+	hw_if->enable_int(channel, int_id);
+}
+
+static void xgbe_enable_rx_tx_ints(struct xgbe_prv_data *pdata)
+{
+	struct xgbe_channel *channel;
 	unsigned int i;
 
 	channel = pdata->channel;
-	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (channel->tx_ring && channel->rx_ring)
-			int_id = XGMAC_INT_DMA_CH_SR_TI_RI;
-		else if (channel->tx_ring)
-			int_id = XGMAC_INT_DMA_CH_SR_TI;
-		else if (channel->rx_ring)
-			int_id = XGMAC_INT_DMA_CH_SR_RI;
-		else
-			continue;
+	for (i = 0; i < pdata->channel_count; i++, channel++)
+		xgbe_enable_rx_tx_int(pdata, channel);
+}
 
-		hw_if->enable_int(channel, int_id);
-	}
+static void xgbe_disable_rx_tx_int(struct xgbe_prv_data *pdata,
+				   struct xgbe_channel *channel)
+{
+	struct xgbe_hw_if *hw_if = &pdata->hw_if;
+	enum xgbe_int int_id;
+
+	if (channel->tx_ring && channel->rx_ring)
+		int_id = XGMAC_INT_DMA_CH_SR_TI_RI;
+	else if (channel->tx_ring)
+		int_id = XGMAC_INT_DMA_CH_SR_TI;
+	else if (channel->rx_ring)
+		int_id = XGMAC_INT_DMA_CH_SR_RI;
+	else
+		return;
+
+	hw_if->disable_int(channel, int_id);
 }
 
 static void xgbe_disable_rx_tx_ints(struct xgbe_prv_data *pdata)
 {
-	struct xgbe_hw_if *hw_if = &pdata->hw_if;
 	struct xgbe_channel *channel;
-	enum xgbe_int int_id;
 	unsigned int i;
 
 	channel = pdata->channel;
-	for (i = 0; i < pdata->channel_count; i++, channel++) {
-		if (channel->tx_ring && channel->rx_ring)
-			int_id = XGMAC_INT_DMA_CH_SR_TI_RI;
-		else if (channel->tx_ring)
-			int_id = XGMAC_INT_DMA_CH_SR_TI;
-		else if (channel->rx_ring)
-			int_id = XGMAC_INT_DMA_CH_SR_RI;
-		else
-			continue;
+	for (i = 0; i < pdata->channel_count; i++, channel++)
+		xgbe_disable_rx_tx_int(pdata, channel);
+}
 
-		hw_if->disable_int(channel, int_id);
+static bool xgbe_ecc_sec(struct xgbe_prv_data *pdata, unsigned long *period,
+			 unsigned int *count, const char *area)
+{
+	if (time_before(jiffies, *period)) {
+		(*count)++;
+	} else {
+		*period = jiffies + (ecc_sec_period * HZ);
+		*count = 1;
 	}
+
+	if (*count > ecc_sec_info_threshold)
+		dev_warn_once(pdata->dev,
+			      "%s ECC corrected errors exceed informational threshold\n",
+			      area);
+
+	if (*count > ecc_sec_warn_threshold) {
+		dev_warn_once(pdata->dev,
+			      "%s ECC corrected errors exceed warning threshold\n",
+			      area);
+		return true;
+	}
+
+	return false;
+}
+
+static bool xgbe_ecc_ded(struct xgbe_prv_data *pdata, unsigned long *period,
+			 unsigned int *count, const char *area)
+{
+	if (time_before(jiffies, *period)) {
+		(*count)++;
+	} else {
+		*period = jiffies + (ecc_ded_period * HZ);
+		*count = 1;
+	}
+
+	if (*count > ecc_ded_threshold) {
+		netdev_alert(pdata->netdev,
+			     "%s ECC detected errors exceed threshold\n",
+			     area);
+		return true;
+	}
+
+	return false;
+}
+
+static irqreturn_t xgbe_ecc_isr(int irq, void *data)
+{
+	struct xgbe_prv_data *pdata = data;
+	unsigned int ecc_isr;
+	bool stop = false;
+
+	/* Mask status with only the interrupts we care about */
+	ecc_isr = XP_IOREAD(pdata, XP_ECC_ISR);
+	ecc_isr &= XP_IOREAD(pdata, XP_ECC_IER);
+	netif_dbg(pdata, intr, pdata->netdev, "ECC_ISR=%#010x\n", ecc_isr);
+
+	if (XP_GET_BITS(ecc_isr, XP_ECC_ISR, TX_DED)) {
+		stop |= xgbe_ecc_ded(pdata, &pdata->tx_ded_period,
+				     &pdata->tx_ded_count, "TX fifo");
+	}
+
+	if (XP_GET_BITS(ecc_isr, XP_ECC_ISR, RX_DED)) {
+		stop |= xgbe_ecc_ded(pdata, &pdata->rx_ded_period,
+				     &pdata->rx_ded_count, "RX fifo");
+	}
+
+	if (XP_GET_BITS(ecc_isr, XP_ECC_ISR, DESC_DED)) {
+		stop |= xgbe_ecc_ded(pdata, &pdata->desc_ded_period,
+				     &pdata->desc_ded_count,
+				     "descriptor cache");
+	}
+
+	if (stop) {
+		pdata->hw_if.disable_ecc_ded(pdata);
+		schedule_work(&pdata->stopdev_work);
+		goto out;
+	}
+
+	if (XP_GET_BITS(ecc_isr, XP_ECC_ISR, TX_SEC)) {
+		if (xgbe_ecc_sec(pdata, &pdata->tx_sec_period,
+				 &pdata->tx_sec_count, "TX fifo"))
+			pdata->hw_if.disable_ecc_sec(pdata, XGBE_ECC_SEC_TX);
+	}
+
+	if (XP_GET_BITS(ecc_isr, XP_ECC_ISR, RX_SEC))
+		if (xgbe_ecc_sec(pdata, &pdata->rx_sec_period,
+				 &pdata->rx_sec_count, "RX fifo"))
+			pdata->hw_if.disable_ecc_sec(pdata, XGBE_ECC_SEC_RX);
+
+	if (XP_GET_BITS(ecc_isr, XP_ECC_ISR, DESC_SEC))
+		if (xgbe_ecc_sec(pdata, &pdata->desc_sec_period,
+				 &pdata->desc_sec_count, "descriptor cache"))
+			pdata->hw_if.disable_ecc_sec(pdata, XGBE_ECC_SEC_DESC);
+
+out:
+	/* Clear all ECC interrupts */
+	XP_IOWRITE(pdata, XP_ECC_ISR, ecc_isr);
+
+	return IRQ_HANDLED;
 }
 
 static irqreturn_t xgbe_isr(int irq, void *data)
@@ -321,7 +443,7 @@ static irqreturn_t xgbe_isr(int irq, void *data)
 	struct xgbe_hw_if *hw_if = &pdata->hw_if;
 	struct xgbe_channel *channel;
 	unsigned int dma_isr, dma_ch_isr;
-	unsigned int mac_isr, mac_tssr;
+	unsigned int mac_isr, mac_tssr, mac_mdioisr;
 	unsigned int i;
 
 	/* The DMA interrupt status register also reports MAC and MTL
@@ -356,20 +478,33 @@ static irqreturn_t xgbe_isr(int irq, void *data)
 				xgbe_disable_rx_tx_ints(pdata);
 
 				/* Turn on polling */
-				__napi_schedule(&pdata->napi);
+				__napi_schedule_irqoff(&pdata->napi);
 			}
+		} else {
+			/* Don't clear Rx/Tx status if doing per channel DMA
+			 * interrupts, these will be cleared by the ISR for
+			 * per channel DMA interrupts.
+			 */
+			XGMAC_SET_BITS(dma_ch_isr, DMA_CH_SR, TI, 0);
+			XGMAC_SET_BITS(dma_ch_isr, DMA_CH_SR, RI, 0);
 		}
+
+		if (XGMAC_GET_BITS(dma_ch_isr, DMA_CH_SR, RBU))
+			pdata->ext_stats.rx_buffer_unavailable++;
 
 		/* Restart the device on a Fatal Bus Error */
 		if (XGMAC_GET_BITS(dma_ch_isr, DMA_CH_SR, FBE))
 			schedule_work(&pdata->restart_work);
 
-		/* Clear all interrupt signals */
+		/* Clear interrupt signals */
 		XGMAC_DMA_IOWRITE(channel, DMA_CH_SR, dma_ch_isr);
 	}
 
 	if (XGMAC_GET_BITS(dma_isr, DMA_ISR, MACIS)) {
 		mac_isr = XGMAC_IOREAD(pdata, MAC_ISR);
+
+		netif_dbg(pdata, intr, pdata->netdev, "MAC_ISR=%#010x\n",
+			  mac_isr);
 
 		if (XGMAC_GET_BITS(mac_isr, MAC_ISR, MMCTXIS))
 			hw_if->tx_mmc_int(pdata);
@@ -380,14 +515,41 @@ static irqreturn_t xgbe_isr(int irq, void *data)
 		if (XGMAC_GET_BITS(mac_isr, MAC_ISR, TSIS)) {
 			mac_tssr = XGMAC_IOREAD(pdata, MAC_TSSR);
 
+			netif_dbg(pdata, intr, pdata->netdev,
+				  "MAC_TSSR=%#010x\n", mac_tssr);
+
 			if (XGMAC_GET_BITS(mac_tssr, MAC_TSSR, TXTSC)) {
 				/* Read Tx Timestamp to clear interrupt */
 				pdata->tx_tstamp =
 					hw_if->get_tx_tstamp(pdata);
-				schedule_work(&pdata->tx_tstamp_work);
+				queue_work(pdata->dev_workqueue,
+					   &pdata->tx_tstamp_work);
 			}
 		}
+
+		if (XGMAC_GET_BITS(mac_isr, MAC_ISR, SMI)) {
+			mac_mdioisr = XGMAC_IOREAD(pdata, MAC_MDIOISR);
+
+			netif_dbg(pdata, intr, pdata->netdev,
+				  "MAC_MDIOISR=%#010x\n", mac_mdioisr);
+
+			if (XGMAC_GET_BITS(mac_mdioisr, MAC_MDIOISR,
+					   SNGLCOMPINT))
+				complete(&pdata->mdio_complete);
+		}
 	}
+
+	/* If there is not a separate AN irq, handle it here */
+	if (pdata->dev_irq == pdata->an_irq)
+		pdata->phy_if.an_isr(irq, pdata);
+
+	/* If there is not a separate ECC irq, handle it here */
+	if (pdata->vdata->ecc_support && (pdata->dev_irq == pdata->ecc_irq))
+		xgbe_ecc_isr(irq, pdata);
+
+	/* If there is not a separate I2C irq, handle it here */
+	if (pdata->vdata->i2c_support && (pdata->dev_irq == pdata->i2c_irq))
+		pdata->i2c_if.i2c_isr(irq, pdata);
 
 isr_done:
 	return IRQ_HANDLED;
@@ -396,17 +558,28 @@ isr_done:
 static irqreturn_t xgbe_dma_isr(int irq, void *data)
 {
 	struct xgbe_channel *channel = data;
+	struct xgbe_prv_data *pdata = channel->pdata;
+	unsigned int dma_status;
 
 	/* Per channel DMA interrupts are enabled, so we use the per
 	 * channel napi structure and not the private data napi structure
 	 */
 	if (napi_schedule_prep(&channel->napi)) {
 		/* Disable Tx and Rx interrupts */
-		disable_irq_nosync(channel->dma_irq);
+		if (pdata->channel_irq_mode)
+			xgbe_disable_rx_tx_int(pdata, channel);
+		else
+			disable_irq_nosync(channel->dma_irq);
 
 		/* Turn on polling */
-		__napi_schedule(&channel->napi);
+		__napi_schedule_irqoff(&channel->napi);
 	}
+
+	/* Clear Tx/Rx signals */
+	dma_status = 0;
+	XGMAC_SET_BITS(dma_status, DMA_CH_SR, TI, 1);
+	XGMAC_SET_BITS(dma_status, DMA_CH_SR, RI, 1);
+	XGMAC_DMA_IOWRITE(channel, DMA_CH_SR, dma_status);
 
 	return IRQ_HANDLED;
 }
@@ -424,7 +597,10 @@ static void xgbe_tx_timer(unsigned long data)
 	if (napi_schedule_prep(napi)) {
 		/* Disable Tx and Rx interrupts */
 		if (pdata->per_channel_irq)
-			disable_irq_nosync(channel->dma_irq);
+			if (pdata->channel_irq_mode)
+				xgbe_disable_rx_tx_int(pdata, channel);
+			else
+				disable_irq_nosync(channel->dma_irq);
 		else
 			xgbe_disable_rx_tx_ints(pdata);
 
@@ -450,7 +626,7 @@ static void xgbe_service_timer(unsigned long data)
 {
 	struct xgbe_prv_data *pdata = (struct xgbe_prv_data *)data;
 
-	schedule_work(&pdata->service_work);
+	queue_work(pdata->dev_workqueue, &pdata->service_work);
 
 	mod_timer(&pdata->service_timer, jiffies + HZ);
 }
@@ -591,6 +767,10 @@ void xgbe_get_all_hw_features(struct xgbe_prv_data *pdata)
 	hw_feat->tx_ch_cnt++;
 	hw_feat->tc_cnt++;
 
+	/* Translate the fifo sizes into actual numbers */
+	hw_feat->rx_fifo_size = 1 << (hw_feat->rx_fifo_size + 7);
+	hw_feat->tx_fifo_size = 1 << (hw_feat->tx_fifo_size + 7);
+
 	DBGPR("<--xgbe_get_all_hw_features\n");
 }
 
@@ -653,6 +833,16 @@ static int xgbe_request_irqs(struct xgbe_prv_data *pdata)
 		return ret;
 	}
 
+	if (pdata->vdata->ecc_support && (pdata->dev_irq != pdata->ecc_irq)) {
+		ret = devm_request_irq(pdata->dev, pdata->ecc_irq, xgbe_ecc_isr,
+				       0, pdata->ecc_name, pdata);
+		if (ret) {
+			netdev_alert(netdev, "error requesting ecc irq %d\n",
+				     pdata->ecc_irq);
+			goto err_dev_irq;
+		}
+	}
+
 	if (!pdata->per_channel_irq)
 		return 0;
 
@@ -669,17 +859,21 @@ static int xgbe_request_irqs(struct xgbe_prv_data *pdata)
 		if (ret) {
 			netdev_alert(netdev, "error requesting irq %d\n",
 				     channel->dma_irq);
-			goto err_irq;
+			goto err_dma_irq;
 		}
 	}
 
 	return 0;
 
-err_irq:
+err_dma_irq:
 	/* Using an unsigned int, 'i' will go to UINT_MAX and exit */
 	for (i--, channel--; i < pdata->channel_count; i--, channel--)
 		devm_free_irq(pdata->dev, channel->dma_irq, channel);
 
+	if (pdata->vdata->ecc_support && (pdata->dev_irq != pdata->ecc_irq))
+		devm_free_irq(pdata->dev, pdata->ecc_irq, pdata);
+
+err_dev_irq:
 	devm_free_irq(pdata->dev, pdata->dev_irq, pdata);
 
 	return ret;
@@ -691,6 +885,9 @@ static void xgbe_free_irqs(struct xgbe_prv_data *pdata)
 	unsigned int i;
 
 	devm_free_irq(pdata->dev, pdata->dev_irq, pdata);
+
+	if (pdata->vdata->ecc_support && (pdata->dev_irq != pdata->ecc_irq))
+		devm_free_irq(pdata->dev, pdata->ecc_irq, pdata);
 
 	if (!pdata->per_channel_irq)
 		return;
@@ -779,7 +976,7 @@ static void xgbe_free_rx_data(struct xgbe_prv_data *pdata)
 	DBGPR("<--xgbe_free_rx_data\n");
 }
 
-static int xgbe_phy_init(struct xgbe_prv_data *pdata)
+static int xgbe_phy_reset(struct xgbe_prv_data *pdata)
 {
 	pdata->phy_link = -1;
 	pdata->phy_speed = SPEED_UNKNOWN;
@@ -875,15 +1072,15 @@ static int xgbe_start(struct xgbe_prv_data *pdata)
 
 	hw_if->init(pdata);
 
-	ret = phy_if->phy_start(pdata);
-	if (ret)
-		goto err_phy;
-
 	xgbe_napi_enable(pdata, 1);
 
 	ret = xgbe_request_irqs(pdata);
 	if (ret)
 		goto err_napi;
+
+	ret = phy_if->phy_start(pdata);
+	if (ret)
+		goto err_irqs;
 
 	hw_if->enable_tx(pdata);
 	hw_if->enable_rx(pdata);
@@ -891,18 +1088,20 @@ static int xgbe_start(struct xgbe_prv_data *pdata)
 	netif_tx_start_all_queues(netdev);
 
 	xgbe_start_timers(pdata);
-	schedule_work(&pdata->service_work);
+	queue_work(pdata->dev_workqueue, &pdata->service_work);
+
+	clear_bit(XGBE_STOPPED, &pdata->dev_state);
 
 	DBGPR("<--xgbe_start\n");
 
 	return 0;
 
+err_irqs:
+	xgbe_free_irqs(pdata);
+
 err_napi:
 	xgbe_napi_disable(pdata, 1);
 
-	phy_if->phy_stop(pdata);
-
-err_phy:
 	hw_if->exit(pdata);
 
 	return ret;
@@ -918,6 +1117,9 @@ static void xgbe_stop(struct xgbe_prv_data *pdata)
 	unsigned int i;
 
 	DBGPR("-->xgbe_stop\n");
+
+	if (test_bit(XGBE_STOPPED, &pdata->dev_state))
+		return;
 
 	netif_tx_stop_all_queues(netdev);
 
@@ -944,7 +1146,27 @@ static void xgbe_stop(struct xgbe_prv_data *pdata)
 		netdev_tx_reset_queue(txq);
 	}
 
+	set_bit(XGBE_STOPPED, &pdata->dev_state);
+
 	DBGPR("<--xgbe_stop\n");
+}
+
+static void xgbe_stopdev(struct work_struct *work)
+{
+	struct xgbe_prv_data *pdata = container_of(work,
+						   struct xgbe_prv_data,
+						   stopdev_work);
+
+	rtnl_lock();
+
+	xgbe_stop(pdata);
+
+	xgbe_free_tx_data(pdata);
+	xgbe_free_rx_data(pdata);
+
+	rtnl_unlock();
+
+	netdev_alert(pdata->netdev, "device stopped\n");
 }
 
 static void xgbe_restart_dev(struct xgbe_prv_data *pdata)
@@ -1293,8 +1515,8 @@ static int xgbe_open(struct net_device *netdev)
 
 	DBGPR("-->xgbe_open\n");
 
-	/* Initialize the phy */
-	ret = xgbe_phy_init(pdata);
+	/* Reset the phy settings */
+	ret = xgbe_phy_reset(pdata);
 	if (ret)
 		return ret;
 
@@ -1329,6 +1551,7 @@ static int xgbe_open(struct net_device *netdev)
 
 	INIT_WORK(&pdata->service_work, xgbe_service);
 	INIT_WORK(&pdata->restart_work, xgbe_restart);
+	INIT_WORK(&pdata->stopdev_work, xgbe_stopdev);
 	INIT_WORK(&pdata->tx_tstamp_work, xgbe_tx_tstamp);
 	xgbe_init_timers(pdata);
 
@@ -1622,30 +1845,22 @@ static void xgbe_poll_controller(struct net_device *netdev)
 }
 #endif /* End CONFIG_NET_POLL_CONTROLLER */
 
-static int xgbe_setup_tc(struct net_device *netdev, u8 tc)
+static int xgbe_setup_tc(struct net_device *netdev, u32 handle, __be16 proto,
+			 struct tc_to_netdev *tc_to_netdev)
 {
 	struct xgbe_prv_data *pdata = netdev_priv(netdev);
-	unsigned int offset, queue;
-	u8 i;
+	u8 tc;
 
-	if (tc && (tc != pdata->hw_feat.tc_cnt))
+	if (tc_to_netdev->type != TC_SETUP_MQPRIO)
 		return -EINVAL;
 
-	if (tc) {
-		netdev_set_num_tc(netdev, tc);
-		for (i = 0, queue = 0, offset = 0; i < tc; i++) {
-			while ((queue < pdata->tx_q_count) &&
-			       (pdata->q2tc_map[queue] == i))
-				queue++;
+	tc = tc_to_netdev->tc;
 
-			netif_dbg(pdata, drv, netdev, "TC%u using TXq%u-%u\n",
-				  i, offset, queue - 1);
-			netdev_set_tc_queue(netdev, i, queue - offset, offset);
-			offset = queue;
-		}
-	} else {
-		netdev_reset_tc(netdev);
-	}
+	if (tc > pdata->hw_feat.tc_cnt)
+		return -EINVAL;
+
+	pdata->num_tcs = tc;
+	pdata->hw_if.config_tc(pdata);
 
 	return 0;
 }
@@ -1712,9 +1927,9 @@ static const struct net_device_ops xgbe_netdev_ops = {
 	.ndo_set_features	= xgbe_set_features,
 };
 
-struct net_device_ops *xgbe_get_netdev_ops(void)
+const struct net_device_ops *xgbe_get_netdev_ops(void)
 {
-	return (struct net_device_ops *)&xgbe_netdev_ops;
+	return &xgbe_netdev_ops;
 }
 
 static void xgbe_rx_refresh(struct xgbe_channel *channel)
@@ -1807,6 +2022,7 @@ static int xgbe_tx_poll(struct xgbe_channel *channel)
 	struct netdev_queue *txq;
 	int processed = 0;
 	unsigned int tx_packets = 0, tx_bytes = 0;
+	unsigned int cur;
 
 	DBGPR("-->xgbe_tx_poll\n");
 
@@ -1814,10 +2030,15 @@ static int xgbe_tx_poll(struct xgbe_channel *channel)
 	if (!ring)
 		return 0;
 
+	cur = ring->cur;
+
+	/* Be sure we get ring->cur before accessing descriptor data */
+	smp_rmb();
+
 	txq = netdev_get_tx_queue(netdev, channel->queue_index);
 
 	while ((processed < XGBE_TX_DESC_MAX_PROC) &&
-	       (ring->dirty != ring->cur)) {
+	       (ring->dirty != cur)) {
 		rdata = XGBE_GET_DESC_DATA(ring, ring->dirty);
 		rdesc = rdata->rdesc;
 
@@ -2014,7 +2235,6 @@ read_again:
 		skb->dev = netdev;
 		skb->protocol = eth_type_trans(skb, netdev);
 		skb_record_rx_queue(skb, channel->queue_index);
-		skb_mark_napi_id(skb, napi);
 
 		napi_gro_receive(napi, skb);
 
@@ -2040,6 +2260,7 @@ static int xgbe_one_poll(struct napi_struct *napi, int budget)
 {
 	struct xgbe_channel *channel = container_of(napi, struct xgbe_channel,
 						    napi);
+	struct xgbe_prv_data *pdata = channel->pdata;
 	int processed = 0;
 
 	DBGPR("-->xgbe_one_poll: budget=%d\n", budget);
@@ -2053,10 +2274,13 @@ static int xgbe_one_poll(struct napi_struct *napi, int budget)
 	/* If we processed everything, we are done */
 	if (processed < budget) {
 		/* Turn off polling */
-		napi_complete(napi);
+		napi_complete_done(napi, processed);
 
 		/* Enable Tx and Rx interrupts */
-		enable_irq(channel->dma_irq);
+		if (pdata->channel_irq_mode)
+			xgbe_enable_rx_tx_int(pdata, channel);
+		else
+			enable_irq(channel->dma_irq);
 	}
 
 	DBGPR("<--xgbe_one_poll: received = %d\n", processed);
@@ -2095,7 +2319,7 @@ static int xgbe_all_poll(struct napi_struct *napi, int budget)
 	/* If we processed everything, we are done */
 	if (processed < budget) {
 		/* Turn off polling */
-		napi_complete(napi);
+		napi_complete_done(napi, processed);
 
 		/* Enable Tx and Rx interrupts */
 		xgbe_enable_rx_tx_ints(pdata);

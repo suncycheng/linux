@@ -17,7 +17,7 @@
 	model = "Luxul XWC-1000 (BCM4708)";
 
 	chosen {
-		bootargs = "console=ttyS0,115200";
+		bootargs = "console=ttyS0,115200 earlycon";
 	};
 
 	memory {
@@ -54,4 +54,12 @@
 			gpios = <&chipcommon 7 GPIO_ACTIVE_LOW>;
 		};
 	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&spi_nor {
+	status = "okay";
 };
